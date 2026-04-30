@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from pydantic_settings import BaseSettings; from pydantic import BaseModel; import sys; print\\(f'Python {sys.version}'\\)\")",
+      "Bash(curl -sf http://localhost:8000/health)",
+      "Bash(curl -sf http://localhost:8000/)",
+      "PowerShell(Rename-Item *)",
+      "Bash(pip show *)",
+      "Bash(python -c \"from mcp.server.fastmcp import FastMCP; s = FastMCP\\('test'\\); print\\(dir\\(s\\)\\)\")"
+    ]
+  }
+}
