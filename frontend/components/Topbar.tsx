@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { fetchHealth } from "@/lib/api";
-import { useTheme } from "@/lib/theme";
+import { useSidebar } from "@/lib/sidebar";
 
 interface TopbarProps {
   title: string;
@@ -11,7 +11,7 @@ interface TopbarProps {
 
 export default function Topbar({ title, subtitle }: TopbarProps) {
   const [backendOk, setBackendOk] = useState<boolean | null>(null);
-  const { dark, toggle } = useTheme();
+  const { toggle: toggleSidebar } = useSidebar();
 
   useEffect(() => {
     fetchHealth()
@@ -21,31 +21,27 @@ export default function Topbar({ title, subtitle }: TopbarProps) {
 
   return (
     <header className="topbar">
-      <div className="flex-grow-1">
-        <div className="fw-bold" style={{ lineHeight: 1.2 }}>{title}</div>
-        {subtitle && (
-          <div className="text-muted" style={{ fontSize: "0.75rem" }}>{subtitle}</div>
-        )}
-      </div>
-
-      <div className="d-flex align-items-center gap-2 small text-muted">
-        {backendOk === null ? (
-          <span className="spinner-border spinner-border-sm" style={{ width: 10, height: 10 }} />
-        ) : (
-          <span className={`status-dot ${backendOk ? "ok" : "error"}`} />
-        )}
-        <span className="d-none d-sm-inline">
-          {backendOk === false ? "Backend offline" : backendOk ? "Online" : "Checking…"}
-        </span>
-      </div>
-
-      <button
-        className="btn btn-sm btn-outline-secondary"
-        onClick={toggle}
-        title={dark ? "Switch to light mode" : "Switch to dark mode"}
-      >
-        <i className={`bi ${dark ? "bi-sun" : "bi-moon"}`} />
+      <button className="topbar-menu-btn" onClick={toggleSidebar} aria-label="Toggle menu">
+        <i className="bi bi-list" />
       </button>
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="topbar-title">{title}</div>
+        {subtitle && <div className="topbar-subtitle">{subtitle}</div>}
+      </div>
+
+      <div className="d-flex align-items-center gap-2">
+        <div className="topbar-status">
+          {backendOk === null ? (
+            <span className="spinner-border spinner-border-sm" style={{ width: 8, height: 8, borderWidth: "1.5px" }} />
+          ) : (
+            <span className={`status-dot ${backendOk ? "ok" : "error"}`} />
+          )}
+          <span className="status-label d-none d-sm-inline">
+            {backendOk === null ? "Checking…" : backendOk ? "Online" : "Offline"}
+          </span>
+        </div>
+      </div>
     </header>
   );
 }

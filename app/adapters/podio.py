@@ -6,7 +6,6 @@ import httpx
 import structlog
 
 from app.adapters.base import BaseAdapter
-from app.config import get_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -18,10 +17,9 @@ class PodioAdapter(BaseAdapter):
     """Podio CRM adapter using client-credentials OAuth."""
 
     def __init__(self) -> None:
-        settings = get_settings()
-        self._client_id = settings.podio_client_id
-        self._client_secret = settings.podio_client_secret
-        self._app_id = settings.podio_app_id
+        self._client_id: str | None = None
+        self._client_secret: str | None = None
+        self._app_id: str | None = None
         self._connected: bool = False
         self._access_token: str | None = None
 
@@ -60,8 +58,15 @@ class PodioAdapter(BaseAdapter):
     def is_connected(self) -> bool:
         return self._connected
 
+    async def _reload_credentials(self) -> None:
+        from app.services.settings_service import get_setting
+        self._client_id = await get_setting("podio_client_id")
+        self._client_secret = await get_setting("podio_client_secret")
+        self._app_id = await get_setting("podio_app_id")
+
     async def _ensure_connected(self) -> None:
         if not self._connected:
+            await self._reload_credentials()
             await self.connect()
 
     async def get_contact(self, contact_id: str) -> dict[str, Any]:

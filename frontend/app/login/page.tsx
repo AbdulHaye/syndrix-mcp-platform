@@ -55,24 +55,20 @@ export default function LoginPage() {
     <div className="login-page">
       <div className="login-card">
         {/* Logo */}
-        <div className="d-flex align-items-center gap-2 mb-4">
-          <div
-            style={{
-              width: 40,
-              height: 40,
-              background: "#0d6efd",
-              borderRadius: 10,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <i className="bi bi-cpu text-white fs-5" />
+        <div className="d-flex align-items-center justify-content-between mb-4">
+          <div className="d-flex align-items-center gap-2">
+            <div style={{ width: 40, height: 40, background: "#6366f1", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <i className="bi bi-cpu text-white fs-5" />
+            </div>
+            <div>
+              <div className="fw-bold" style={{ lineHeight: 1.2, color: "#0f172a" }}>Syndrix</div>
+              <div style={{ fontSize: "0.7rem", color: "#475569" }}></div>
+            </div>
           </div>
-          <div>
-            <div className="fw-bold" style={{ lineHeight: 1.2 }}>Syndrix</div>
-            <div className="text-muted" style={{ fontSize: "0.7rem" }}>360 Synergy Tech</div>
-          </div>
+          <a href="/" style={{ fontSize: "0.78rem", color: "#475569", textDecoration: "none", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+            <i className="bi bi-arrow-left" />
+            Home
+          </a>
         </div>
 
         <h5 className="fw-bold mb-1">Sign in</h5>

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any
-
-from pydantic import field_validator, model_validator
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,33 +32,6 @@ class Settings(BaseSettings):
 
     # Raw dev tokens string from env (format: team_name:token,team_name:token)
     dev_tokens: str
-
-    # Adapter credentials — all optional
-    podio_client_id: str | None = None
-    podio_client_secret: str | None = None
-    podio_app_id: str | None = None
-
-    ghl_api_key: str | None = None
-    ghl_location_id: str | None = None
-
-    slack_bot_token: str | None = None
-    slack_signing_secret: str | None = None
-
-    github_token: str | None = None
-    github_org: str | None = None
-
-    smtp_host: str | None = None
-    smtp_port: int | None = None
-    smtp_user: str | None = None
-    smtp_password: str | None = None
-    smtp_from: str | None = None
-
-    @field_validator("smtp_port", mode="before")
-    @classmethod
-    def _coerce_smtp_port(cls, v: Any) -> Any:
-        if isinstance(v, str) and not v.strip():
-            return None
-        return v
 
     # Parsed token map — token -> team_name
     _token_map: dict[str, str] = {}

@@ -7,7 +7,6 @@ from typing import Any
 import structlog
 
 from app.adapters.base import BaseAdapter
-from app.config import get_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -16,12 +15,11 @@ class EmailAdapter(BaseAdapter):
     """SMTP email adapter using aiosmtplib."""
 
     def __init__(self) -> None:
-        settings = get_settings()
-        self._host = settings.smtp_host
-        self._port = settings.smtp_port or 587
-        self._user = settings.smtp_user
-        self._password = settings.smtp_password
-        self._from_address = settings.smtp_from or settings.smtp_user
+        self._host: str | None = None
+        self._port: int = 587
+        self._user: str | None = None
+        self._password: str | None = None
+        self._from_address: str | None = None
         self._connected: bool = False
 
     async def connect(self) -> None:
@@ -51,8 +49,18 @@ class EmailAdapter(BaseAdapter):
     def is_connected(self) -> bool:
         return self._connected
 
+    async def _reload_credentials(self) -> None:
+        from app.services.settings_service import get_setting
+        self._host = await get_setting("smtp_host")
+        port_str = await get_setting("smtp_port")
+        self._port = int(port_str) if port_str else 587
+        self._user = await get_setting("smtp_user")
+        self._password = await get_setting("smtp_password")
+        self._from_address = await get_setting("smtp_from") or self._user
+
     async def _ensure_connected(self) -> None:
         if not self._connected:
+            await self._reload_credentials()
             await self.connect()
 
     async def get_contact(self, contact_id: str) -> dict[str, Any]:

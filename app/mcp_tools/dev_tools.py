@@ -13,6 +13,21 @@ def register_dev_tools(mcp: FastMCP) -> None:
     """Register developer-facing MCP tools on the provided FastMCP server."""
 
     @mcp.tool(
+        name="repo.list",
+        description="List all GitHub repositories for the authenticated user.",
+    )
+    async def repo_list() -> dict[str, Any]:
+        from app.adapters.github import github_adapter
+
+        logger.info("repo.list_called")
+        try:
+            repos = await github_adapter.list_repos()
+            return {"success": True, "repos": repos, "total": len(repos)}
+        except Exception as exc:
+            logger.error("repo.list_failed", error=str(exc))
+            return {"success": False, "repos": [], "error": str(exc)}
+
+    @mcp.tool(
         name="repo.search",
         description="Search GitHub repositories by keyword. Scoped to the configured org if set.",
     )
@@ -87,17 +102,16 @@ def register_dev_tools(mcp: FastMCP) -> None:
         logger.info("spec.generate_called", feature_len=len(feature_description))
 
         system_prompt = (
-            "You are a senior software architect. "
-            "When given a feature description, produce a detailed technical specification "
-            "covering: overview, goals, non-goals, system design, data model changes, "
-            "API contracts, edge cases, and acceptance criteria. "
-            "Use clear headings and markdown formatting."
+            "You are a software architect. Given a feature description, write a concise "
+            "technical spec with these sections: Overview, API Design, Data Model, "
+            "Edge Cases, Acceptance Criteria. Use markdown. Be brief and direct."
         )
         try:
             spec_text = await model_gateway.generate(
-                prompt=f"Feature description:\n\n{feature_description}",
+                prompt=f"Feature: {feature_description}",
                 system=system_prompt,
                 model=model_gateway.route_model("code"),
+                num_predict=600,
             )
             return {
                 "success": True,
@@ -127,21 +141,17 @@ def register_dev_tools(mcp: FastMCP) -> None:
         logger.info("bug.triage_called", error_len=len(error_message))
 
         system_prompt = (
-            "You are an expert software engineer performing root-cause analysis. "
-            "When given an error message and optional context, provide: "
-            "1) Probable root cause, "
-            "2) Affected components or code paths, "
-            "3) Suggested investigation steps, "
-            "4) Likely fix approach, "
-            "5) Regression risks. "
-            "Be concise and actionable."
+            "You are a software engineer doing root-cause analysis. "
+            "Given an error, respond with: Root Cause, Fix, Regression Risks. "
+            "Use markdown. Be concise."
         )
-        context_section = f"\n\nAdditional context:\n{context}" if context.strip() else ""
+        context_section = f"\nContext: {context}" if context.strip() else ""
         try:
             analysis = await model_gateway.generate(
-                prompt=f"Error message:\n{error_message}{context_section}",
+                prompt=f"Error: {error_message}{context_section}",
                 system=system_prompt,
                 model=model_gateway.route_model("analysis"),
+                num_predict=400,
             )
             return {
                 "success": True,

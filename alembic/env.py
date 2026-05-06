@@ -4,11 +4,14 @@ import asyncio
 import os
 from logging.config import fileConfig
 
+from dotenv import load_dotenv
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
+
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Alembic Config object (provides access to values in alembic.ini)
@@ -16,8 +19,6 @@ from alembic import context
 config = context.config
 
 # Override the SQLAlchemy URL from environment variable if provided.
-# This allows docker-compose and CI to inject DATABASE_URL without modifying
-# alembic.ini.
 _db_url = os.environ.get("DATABASE_URL")
 if _db_url:
     config.set_main_option("sqlalchemy.url", _db_url)
@@ -69,11 +70,8 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_async_migrations() -> None:
     """Create an async engine and run migrations inside a sync callback."""
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    url = config.get_main_option("sqlalchemy.url")
+    connectable = create_async_engine(url, poolclass=pool.NullPool)
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()

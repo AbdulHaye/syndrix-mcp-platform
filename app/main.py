@@ -177,11 +177,13 @@ from app.api.health import router as health_router  # noqa: E402
 from app.api.admin import router as admin_router  # noqa: E402
 from app.api.ingest import router as ingest_router  # noqa: E402
 from app.api.tools import router as tools_router  # noqa: E402
+from app.api.settings import router as settings_router  # noqa: E402
 
 app.include_router(health_router)
 app.include_router(admin_router)
 app.include_router(ingest_router)
 app.include_router(tools_router)
+app.include_router(settings_router)
 
 # ---------------------------------------------------------------------------
 # Mount MCP server

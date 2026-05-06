@@ -5,16 +5,19 @@ import "@/app/globals.css";
 
 export const metadata: Metadata = {
   title: "Syndrix",
-  description: "Internal AI capability hub — 360 Synergy Tech",
+  description: "Internal AI capability hub for enterprises",
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+  },
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" data-bs-theme="light">
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: `try{localStorage.removeItem('mcp_theme');}catch(e){}` }} />
+      </head>
       <body>{children}</body>
     </html>
   );

@@ -9,9 +9,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.storage.db import Base
 
+import os
+
 try:
     from pgvector.sqlalchemy import Vector  # type: ignore[import]
-    _VECTOR_AVAILABLE = True
+    _VECTOR_AVAILABLE = os.environ.get("PGVECTOR_ENABLED", "true").lower() != "false"
 except ImportError:  # pragma: no cover
     _VECTOR_AVAILABLE = False
     Vector = None  # type: ignore[assignment, misc]
@@ -56,13 +58,27 @@ class KnowledgeDocument(Base):
     )
 
     if _VECTOR_AVAILABLE and Vector is not None:
-        embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+        embedding: Mapped[list[float] | None] = mapped_column(Vector(768), nullable=True)
     else:
         # Fallback when pgvector is not installed — store as text
         embedding: Mapped[str | None] = mapped_column(Text, nullable=True)  # type: ignore[assignment]
 
     def __repr__(self) -> str:
         return f"<KnowledgeDocument id={self.id} title={self.title!r}>"
+
+
+class IntegrationSetting(Base):
+    __tablename__ = "integration_settings"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
+    )
+    updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<IntegrationSetting key={self.key!r}>"
 
 
 class TeamToken(Base):

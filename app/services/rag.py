@@ -7,8 +7,8 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-_DEFAULT_CHUNK_SIZE = 400  # words per chunk
-_DEFAULT_CHUNK_OVERLAP = 50  # words of overlap between chunks
+_DEFAULT_CHUNK_SIZE = 150  # words per chunk
+_DEFAULT_CHUNK_OVERLAP = 20  # words of overlap between chunks
 
 
 def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:

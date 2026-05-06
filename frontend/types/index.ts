@@ -60,6 +60,13 @@ export interface IngestResult {
   error?: string;
 }
 
+export interface IntegrationSetting {
+  key: string;
+  value: string;
+  is_secret: boolean;
+  is_set: boolean;
+}
+
 export interface NavItem {
   label: string;
   href: string;

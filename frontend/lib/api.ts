@@ -87,3 +87,37 @@ export async function fetchAuditLog(
 export async function fetchMetrics(): Promise<Record<string, unknown>> {
   return request("/admin/metrics");
 }
+
+// ── Settings ─────────────────────────────────────────────────────────────────
+
+export async function fetchSettings(): Promise<{
+  settings: import("@/types").IntegrationSetting[];
+}> {
+  const token = getAuth()?.token ?? "";
+  const { deriveKey, decryptWithKey, encryptWithKey } = await import("@/lib/crypto");
+  const key = await deriveKey(token);
+
+  // Response is a single encrypted envelope: { data: "<ciphertext>" }
+  const envelope = await request<{ data: string }>("/settings");
+  const json = JSON.parse(await decryptWithKey(envelope.data, key));
+  return json as { settings: import("@/types").IntegrationSetting[] };
+}
+
+export async function saveSettings(
+  settings: Record<string, string | null>
+): Promise<{ success: boolean; saved: string[] }> {
+  const token = getAuth()?.token ?? "";
+  const { deriveKey, encryptWithKey, decryptWithKey } = await import("@/lib/crypto");
+  const key = await deriveKey(token);
+
+  // Encrypt the entire payload as one blob
+  const ciphertext = await encryptWithKey(JSON.stringify({ settings }), key);
+  const envelope = await request<{ data: string }>("/settings", {
+    method: "PUT",
+    body: JSON.stringify({ data: ciphertext }),
+  });
+
+  // Response is also encrypted
+  const json = JSON.parse(await decryptWithKey(envelope.data, key));
+  return json as { success: boolean; saved: string[] };
+}

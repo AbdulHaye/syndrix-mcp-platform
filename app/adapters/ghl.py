@@ -6,7 +6,6 @@ import httpx
 import structlog
 
 from app.adapters.base import BaseAdapter
-from app.config import get_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -17,9 +16,8 @@ class GoHighLevelAdapter(BaseAdapter):
     """GoHighLevel CRM adapter using API key auth (v1)."""
 
     def __init__(self) -> None:
-        settings = get_settings()
-        self._api_key = settings.ghl_api_key
-        self._location_id = settings.ghl_location_id
+        self._api_key: str | None = None
+        self._location_id: str | None = None
         self._connected: bool = False
 
     def _headers(self) -> dict[str, str]:
@@ -54,8 +52,14 @@ class GoHighLevelAdapter(BaseAdapter):
     def is_connected(self) -> bool:
         return self._connected
 
+    async def _reload_credentials(self) -> None:
+        from app.services.settings_service import get_setting
+        self._api_key = await get_setting("ghl_api_key")
+        self._location_id = await get_setting("ghl_location_id")
+
     async def _ensure_connected(self) -> None:
         if not self._connected:
+            await self._reload_credentials()
             await self.connect()
 
     async def get_contact(self, contact_id: str) -> dict[str, Any]:

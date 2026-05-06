@@ -6,7 +6,6 @@ import httpx
 import structlog
 
 from app.adapters.base import BaseAdapter
-from app.config import get_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -17,9 +16,8 @@ class SlackAdapter(BaseAdapter):
     """Slack Web API adapter using bot token."""
 
     def __init__(self) -> None:
-        settings = get_settings()
-        self._bot_token = settings.slack_bot_token
-        self._signing_secret = settings.slack_signing_secret
+        self._bot_token: str | None = None
+        self._signing_secret: str | None = None
         self._connected: bool = False
 
     def _headers(self) -> dict[str, str]:
@@ -57,8 +55,14 @@ class SlackAdapter(BaseAdapter):
     def is_connected(self) -> bool:
         return self._connected
 
+    async def _reload_credentials(self) -> None:
+        from app.services.settings_service import get_setting
+        self._bot_token = await get_setting("slack_bot_token")
+        self._signing_secret = await get_setting("slack_signing_secret")
+
     async def _ensure_connected(self) -> None:
         if not self._connected:
+            await self._reload_credentials()
             await self.connect()
 
     def _check_ok(self, data: dict[str, Any]) -> dict[str, Any]:

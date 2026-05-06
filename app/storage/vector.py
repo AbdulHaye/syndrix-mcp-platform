@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -7,7 +8,7 @@ import structlog
 from sqlalchemy import select, text
 
 from app.storage.db import get_db
-from app.storage.models import KnowledgeDocument
+from app.storage.models import KnowledgeDocument, _VECTOR_AVAILABLE
 
 logger = structlog.get_logger(__name__)
 
@@ -29,6 +30,7 @@ class VectorStore:
         embedding: list[float],
     ) -> KnowledgeDocument:
         """Persist a document chunk and its embedding to the database."""
+        stored_embedding: Any = embedding if _VECTOR_AVAILABLE else json.dumps(embedding)
         async with get_db() as session:
             doc = KnowledgeDocument(
                 id=uuid.uuid4(),
@@ -36,7 +38,7 @@ class VectorStore:
                 source=source,
                 content=content,
                 chunk_index=0,
-                embedding=embedding,  # type: ignore[arg-type]
+                embedding=stored_embedding,
             )
             session.add(doc)
             await session.flush()
@@ -88,6 +90,7 @@ class VectorStore:
                     error=str(exc),
                     msg="pgvector may not be installed; returning recent docs",
                 )
+                await session.rollback()
                 stmt_fallback = (
                     select(KnowledgeDocument)
                     .order_by(KnowledgeDocument.created_at.desc())

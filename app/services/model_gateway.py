@@ -13,7 +13,7 @@ logger = structlog.get_logger(__name__)
 # Task-type to model routing table
 _TASK_MODEL_MAP: dict[str, str] = {
     "chat": "llama3.2",
-    "code": "codellama",
+    "code": "llama3.2",
     "summary": "llama3.2",
     "embed": "nomic-embed-text",
     "extract": "llama3.2",
@@ -43,6 +43,7 @@ class ModelGateway:
         prompt: str,
         model: str | None = None,
         system: str | None = None,
+        num_predict: int = 512,
     ) -> str:
         """Generate a text completion from Ollama. Returns the response string."""
         chosen_model = model or self._default_model
@@ -50,13 +51,14 @@ class ModelGateway:
             "model": chosen_model,
             "prompt": prompt,
             "stream": False,
+            "options": {"num_predict": num_predict},
         }
         if system:
             payload["system"] = system
 
         log = logger.bind(model=chosen_model, task="generate")
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=180.0) as client:
                 response = await client.post(
                     f"{self._base_url}/api/generate",
                     json=payload,
@@ -69,6 +71,9 @@ class ModelGateway:
         except httpx.HTTPStatusError as exc:
             log.error("generate_http_error", status=exc.response.status_code, detail=str(exc))
             raise
+        except httpx.TimeoutException as exc:
+            log.error("generate_timeout", model=chosen_model, detail=str(exc))
+            raise RuntimeError(f"Ollama timed out after 180s (model={chosen_model})") from exc
         except httpx.RequestError as exc:
             log.error("generate_request_error", detail=str(exc))
             raise
@@ -121,7 +126,7 @@ class ModelGateway:
 
         log = logger.bind(model=chosen_model, task="embed")
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
                     f"{self._base_url}/api/embeddings",
                     json=payload,

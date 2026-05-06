@@ -6,7 +6,15 @@
       "Bash(curl -sf http://localhost:8000/)",
       "PowerShell(Rename-Item *)",
       "Bash(pip show *)",
-      "Bash(python -c \"from mcp.server.fastmcp import FastMCP; s = FastMCP\\('test'\\); print\\(dir\\(s\\)\\)\")"
+      "Bash(python -c \"from mcp.server.fastmcp import FastMCP; s = FastMCP\\('test'\\); print\\(dir\\(s\\)\\)\")",
+      "Bash(ollama list *)",
+      "Bash(Get-ChildItem *)",
+      "Bash(npx tsc *)",
+      "Bash(python -m alembic upgrade head)",
+      "Bash(findstr /i \"PGVECTOR\" .env)",
+      "Bash(findstr /i \"pgvector\")",
+      "Bash(python -c \"from app.api.settings import router; from app.services.settings_service import get_setting, get_all_settings; print\\('imports OK'\\)\")",
+      "Bash(python -c ' *)"
     ]
   }
 }

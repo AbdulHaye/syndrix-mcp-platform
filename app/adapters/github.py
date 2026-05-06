@@ -6,7 +6,6 @@ import httpx
 import structlog
 
 from app.adapters.base import BaseAdapter
-from app.config import get_settings
 
 logger = structlog.get_logger(__name__)
 
@@ -17,9 +16,8 @@ class GitHubAdapter(BaseAdapter):
     """GitHub REST API adapter using personal access token."""
 
     def __init__(self) -> None:
-        settings = get_settings()
-        self._token = settings.github_token
-        self._org = settings.github_org
+        self._token: str | None = None
+        self._org: str | None = None
         self._connected: bool = False
 
     def _headers(self) -> dict[str, str]:
@@ -56,8 +54,14 @@ class GitHubAdapter(BaseAdapter):
     def is_connected(self) -> bool:
         return self._connected
 
+    async def _reload_credentials(self) -> None:
+        from app.services.settings_service import get_setting
+        self._token = await get_setting("github_token")
+        self._org = await get_setting("github_org")
+
     async def _ensure_connected(self) -> None:
         if not self._connected:
+            await self._reload_credentials()
             await self.connect()
 
     async def get_contact(self, contact_id: str) -> dict[str, Any]:
@@ -125,6 +129,26 @@ class GitHubAdapter(BaseAdapter):
                 "html_url": data.get("html_url"),
                 "title": data.get("title"),
             }
+
+    async def list_repos(self, per_page: int = 100) -> list[dict[str, Any]]:
+        await self._ensure_connected()
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{_GITHUB_BASE_URL}/user/repos",
+                headers=self._headers(),
+                params={"per_page": per_page, "sort": "updated", "type": "all"},
+            )
+            resp.raise_for_status()
+            return [
+                {
+                    "full_name": r["full_name"],
+                    "name": r["name"],
+                    "description": r.get("description"),
+                    "private": r.get("private", False),
+                    "html_url": r["html_url"],
+                }
+                for r in resp.json()
+            ]
 
     async def get_pr_list(self, repo: str) -> dict[str, Any]:
         await self._ensure_connected()

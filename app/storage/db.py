@@ -70,7 +70,10 @@ async def init_db() -> None:
 
     engine = _get_engine()
     async with engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        try:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        except Exception:
+            logger.warning("pgvector_extension_unavailable", msg="pgvector not installed; vector search disabled")
         await conn.run_sync(Base.metadata.create_all)
     logger.info("database_tables_created")
 

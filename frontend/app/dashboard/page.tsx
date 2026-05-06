@@ -1,167 +1,260 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import Topbar from "@/components/Topbar";
-import ToolCard from "@/components/ToolCard";
-import { fetchHealth } from "@/lib/api";
+import { fetchHealthDetailed } from "@/lib/api";
 import { getAuth, getRoleLabel } from "@/lib/auth";
 import type { HealthStatus } from "@/types";
 
-const TOOL_SECTIONS = [
-  {
-    label: "CRM & BD",
-    roles: ["bd", "admin"],
-    color: "#198754",
-    items: [
-      { icon: "bi-person-lines-fill", bg: "#198754", title: "Contact Lookup", desc: "Find and view CRM contacts from Podio.", href: "/dashboard/crm" },
-      { icon: "bi-search", bg: "#20c997", title: "Lead Search", desc: "Search leads by keyword or filter.", href: "/dashboard/crm" },
-      { icon: "bi-chat-left-text", bg: "#0dcaf0", title: "Send Message", desc: "SMS or email a GHL contact.", href: "/dashboard/crm" },
-    ],
-  },
-  {
-    label: "Development",
-    roles: ["dev", "admin"],
-    color: "#0d6efd",
-    items: [
-      { icon: "bi-github", bg: "#0d6efd", title: "Repo Search", desc: "Search GitHub repositories.", href: "/dashboard/dev" },
-      { icon: "bi-ticket", bg: "#6f42c1", title: "Create Ticket", desc: "Open a GitHub issue.", href: "/dashboard/dev" },
-      { icon: "bi-file-earmark-code", bg: "#fd7e14", title: "Spec Generator", desc: "Generate a tech spec using the local LLM.", href: "/dashboard/dev" },
-    ],
-  },
-  {
-    label: "Management",
-    roles: ["mgmt", "admin"],
-    color: "#ffc107",
-    items: [
-      { icon: "bi-clipboard-data", bg: "#ffc107", title: "Daily Report", desc: "Team activity summary for today.", href: "/dashboard/mgmt" },
-      { icon: "bi-heart-pulse", bg: "#dc3545", title: "Client Health", desc: "Health score for a client account.", href: "/dashboard/mgmt" },
-    ],
-  },
-  {
-    label: "Knowledge Base",
-    roles: ["bd", "dev", "mgmt", "admin"],
-    color: "#6f42c1",
-    items: [
-      { icon: "bi-search", bg: "#6f42c1", title: "Semantic Search", desc: "Search the internal knowledge base.", href: "/dashboard/rag" },
-      { icon: "bi-cloud-upload", bg: "#0dcaf0", title: "Ingest Document", desc: "Add a document to the knowledge base.", href: "/dashboard/rag" },
-    ],
-  },
-];
+const SERVICE_ICONS: Record<string, string> = {
+  database:  "bi-database-fill",
+  redis:     "bi-lightning-fill",
+  ollama:    "bi-cpu-fill",
+  postgres:  "bi-database-fill",
+  celery:    "bi-gear-fill",
+};
+
+function ServiceCard({ name, info }: { name: string; info: { status: string; detail?: string } }) {
+  const ok = info.status === "ok";
+  const degraded = info.status === "degraded";
+  const dotCls = ok ? "ok" : degraded ? "degraded" : "error";
+  const icon = SERVICE_ICONS[name.toLowerCase()] ?? "bi-hdd-network-fill";
+
+  return (
+    <div className="service-row">
+      <div className="d-flex align-items-center gap-3">
+        <div
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 9,
+            background: ok ? "rgba(16,185,129,0.1)" : degraded ? "rgba(245,158,11,0.1)" : "rgba(239,68,68,0.1)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <i
+            className={`bi ${icon}`}
+            style={{ color: ok ? "#10b981" : degraded ? "#f59e0b" : "#ef4444", fontSize: "1rem" }}
+          />
+        </div>
+        <div>
+          <div className="fw-semibold text-capitalize" style={{ fontSize: "0.875rem" }}>{name}</div>
+          {info.detail && (
+            <div className="small mt-1" style={{ color: "#ef4444", fontSize: "0.75rem" }}>{info.detail}</div>
+          )}
+        </div>
+      </div>
+      <div className="d-flex align-items-center gap-2">
+        <span className={`service-dot ${dotCls}`} />
+        <span
+          style={{
+            fontSize: "0.72rem",
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+            color: ok ? "#10b981" : degraded ? "#f59e0b" : "#ef4444",
+          }}
+        >
+          {info.status}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 export default function DashboardPage() {
-  const router = useRouter();
   const auth = getAuth();
   const role = auth?.role ?? "dev";
   const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchHealth()
-      .then(setHealth)
-      .catch(() => setHealth({ status: "error", env: "unknown", version: "?" }));
-  }, []);
+  async function refresh() {
+    setLoading(true);
+    try {
+      const h = await fetchHealthDetailed();
+      setHealth(h);
+    } catch {
+      setHealth({ status: "error", env: "unknown", version: "?" });
+    } finally {
+      setLoading(false);
+    }
+  }
 
-  const visibleSections = TOOL_SECTIONS.filter((s) =>
-    s.roles.includes(role)
-  );
+  useEffect(() => { refresh(); }, []);
+
+  const overallOk = health?.status === "ok";
+  const overallDegraded = health?.status === "degraded";
+  const statusColor = overallOk ? "#10b981" : overallDegraded ? "#f59e0b" : "#ef4444";
+  const statusBg    = overallOk ? "rgba(16,185,129,0.1)" : overallDegraded ? "rgba(245,158,11,0.1)" : "rgba(239,68,68,0.1)";
+
+  const serviceCount = health?.services ? Object.keys(health.services).length : 0;
+  const healthyCount = health?.services
+    ? Object.values(health.services).filter((s) => s.status === "ok").length
+    : 0;
+
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const dateStr = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
 
   return (
     <>
-      <Topbar
-        title="Overview"
-        subtitle={`Welcome back — ${getRoleLabel(role)}`}
-      />
-      <div className="page-body">
-        {/* Stats row */}
+      <Topbar title="Overview" subtitle={`${dateStr} · ${timeStr}`} />
+
+      <div className="page-body fade-in">
+        {/* ── Page header ── */}
+        <div className="page-header">
+          <div>
+            <div className="page-header-title">
+              Welcome back, {auth?.team ?? "Guest"}
+            </div>
+            <div className="page-header-subtitle">
+              {getRoleLabel(role)} · Syndrix AI Hub
+            </div>
+          </div>
+          <button
+            className="btn btn-sm d-flex align-items-center gap-2"
+            style={{
+              background: "var(--primary)",
+              color: "white",
+              border: "none",
+              borderRadius: "var(--radius-sm)",
+              padding: "0.45rem 1rem",
+              fontSize: "0.8rem",
+              fontWeight: 500,
+            }}
+            onClick={refresh}
+            disabled={loading}
+          >
+            <i className={`bi bi-arrow-clockwise${loading ? " spin" : ""}`} />
+            Refresh
+          </button>
+        </div>
+
+        {/* ── Metric cards ── */}
         <div className="row g-3 mb-4">
-          <div className="col-sm-6 col-lg-3">
-            <div className="stat-card">
-              <div className="d-flex align-items-center gap-2 mb-1">
-                <i className="bi bi-activity text-primary" />
-                <span className="small text-muted">Backend</span>
+          <div className="col-6 col-lg-3">
+            <div className="metric-card h-100">
+              <div className="metric-icon" style={{ background: statusBg }}>
+                <i className="bi bi-activity" style={{ color: statusColor }} />
               </div>
-              <div className="stat-value">
-                {health === null ? (
-                  <span className="spinner-border spinner-border-sm" />
-                ) : (
-                  <span
-                    className={`badge fs-6 bg-${health.status === "ok" ? "success" : health.status === "degraded" ? "warning" : "danger"}`}
-                  >
-                    {health.status.toUpperCase()}
-                  </span>
-                )}
-              </div>
-              <div className="stat-label">Platform status</div>
+              {loading ? (
+                <div className="skeleton" style={{ height: 28, width: 80, marginBottom: 6 }} />
+              ) : (
+                <div className="metric-value" style={{ fontSize: "1.6rem", color: statusColor }}>
+                  {health?.status?.toUpperCase() ?? "—"}
+                </div>
+              )}
+              <div className="metric-label">Platform Status</div>
             </div>
           </div>
-          <div className="col-sm-6 col-lg-3">
-            <div className="stat-card">
-              <div className="d-flex align-items-center gap-2 mb-1">
-                <i className="bi bi-person-badge text-success" />
-                <span className="small text-muted">Logged in as</span>
+
+          <div className="col-6 col-lg-3">
+            <div className="metric-card h-100">
+              <div className="metric-icon" style={{ background: "rgba(99,102,241,0.1)" }}>
+                <i className="bi bi-hdd-stack-fill" style={{ color: "#6366f1" }} />
               </div>
-              <div className="stat-value" style={{ fontSize: "1.2rem" }}>
-                {auth?.team ?? "—"}
-              </div>
-              <div className="stat-label">{getRoleLabel(role)}</div>
+              {loading ? (
+                <div className="skeleton" style={{ height: 28, width: 60, marginBottom: 6 }} />
+              ) : (
+                <div className="metric-value" style={{ fontSize: "1.6rem" }}>
+                  {healthyCount}<span style={{ fontSize: "1rem", fontWeight: 400, color: "var(--text-muted)" }}>/{serviceCount}</span>
+                </div>
+              )}
+              <div className="metric-label">Services Healthy</div>
             </div>
           </div>
-          <div className="col-sm-6 col-lg-3">
-            <div className="stat-card">
-              <div className="d-flex align-items-center gap-2 mb-1">
-                <i className="bi bi-tools text-warning" />
-                <span className="small text-muted">Available tools</span>
+
+          <div className="col-6 col-lg-3">
+            <div className="metric-card h-100">
+              <div className="metric-icon" style={{ background: "rgba(16,185,129,0.1)" }}>
+                <i className="bi bi-person-badge-fill" style={{ color: "#10b981" }} />
               </div>
-              <div className="stat-value">
-                {visibleSections.reduce((a, s) => a + s.items.length, 0)}
+              <div className="metric-value" style={{ fontSize: "1.6rem" }}>
+                {getRoleLabel(role)}
               </div>
-              <div className="stat-label">for your role</div>
+              <div className="metric-label">Your Role</div>
             </div>
           </div>
-          <div className="col-sm-6 col-lg-3">
-            <div className="stat-card">
-              <div className="d-flex align-items-center gap-2 mb-1">
-                <i className="bi bi-tag text-info" />
-                <span className="small text-muted">Version</span>
+
+          <div className="col-6 col-lg-3">
+            <div className="metric-card h-100">
+              <div className="metric-icon" style={{ background: "rgba(245,158,11,0.1)" }}>
+                <i className="bi bi-tag-fill" style={{ color: "#f59e0b" }} />
               </div>
-              <div className="stat-value" style={{ fontSize: "1.4rem" }}>
-                {health?.version ?? "—"}
-              </div>
-              <div className="stat-label">{health?.env ?? "…"}</div>
+              {loading ? (
+                <div className="skeleton" style={{ height: 28, width: 50, marginBottom: 6 }} />
+              ) : (
+                <div className="metric-value" style={{ fontSize: "1.6rem" }}>
+                  {health?.version ?? "—"}
+                </div>
+              )}
+              <div className="metric-label">Version · {health?.env ?? "…"}</div>
             </div>
           </div>
         </div>
 
-        {/* Tool sections */}
-        {visibleSections.map((section) => (
-          <div key={section.label} className="mb-4">
-            <h6 className="fw-bold mb-3 d-flex align-items-center gap-2">
-              <span
-                style={{
-                  width: 10,
-                  height: 10,
-                  borderRadius: "50%",
-                  background: section.color,
-                  display: "inline-block",
-                }}
-              />
-              {section.label}
-            </h6>
-            <div className="row g-3">
-              {section.items.map((item) => (
-                <div key={item.title} className="col-sm-6 col-lg-4">
-                  <ToolCard
-                    icon={item.icon}
-                    iconBg={item.bg}
-                    title={item.title}
-                    description={item.desc}
-                    onClick={() => router.push(item.href)}
-                  />
-                </div>
-              ))}
+        {/* ── Service health ── */}
+        <div className="content-card">
+          <div className="content-card-header">
+            <div className="d-flex align-items-center gap-2">
+              <i className="bi bi-heartbeat" style={{ color: "var(--primary)", fontSize: "1rem" }} />
+              <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>Dependency Health</span>
             </div>
+            {!loading && health && (
+              <span
+                className="badge"
+                style={{
+                  background: statusBg,
+                  color: statusColor,
+                  fontWeight: 600,
+                  fontSize: "0.7rem",
+                  padding: "0.3rem 0.65rem",
+                  borderRadius: 20,
+                }}
+              >
+                {healthyCount}/{serviceCount} healthy
+              </span>
+            )}
           </div>
-        ))}
+
+          <div className="content-card-body">
+            {loading && (
+              <div>
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="service-row">
+                    <div className="d-flex align-items-center gap-3">
+                      <div className="skeleton" style={{ width: 38, height: 38, borderRadius: 9 }} />
+                      <div>
+                        <div className="skeleton" style={{ width: 100, height: 14, marginBottom: 5 }} />
+                        <div className="skeleton" style={{ width: 60, height: 11 }} />
+                      </div>
+                    </div>
+                    <div className="skeleton" style={{ width: 50, height: 20, borderRadius: 10 }} />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!loading && health?.services && Object.entries(health.services).map(([name, info]) => (
+              <ServiceCard key={name} name={name} info={info} />
+            ))}
+
+            {!loading && !health?.services && (
+              <div className="empty-state py-4">
+                <i className="bi bi-wifi-off" />
+                <div style={{ fontSize: "0.875rem" }}>
+                  Could not reach backend. Is the server running at{" "}
+                  <code style={{ fontSize: "0.8rem" }}>
+                    {process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}
+                  </code>?
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
       </div>
     </>
   );
