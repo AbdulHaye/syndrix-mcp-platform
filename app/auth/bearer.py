@@ -48,7 +48,20 @@ def _infer_role(team_name: str) -> TeamRole:
 
 
 def verify_token(token: str) -> TeamIdentity | None:
-    """Check token against dev_tokens settings. Returns TeamIdentity or None."""
+    """Verify a bearer token. Tries JWT first, then falls back to DEV_TOKENS."""
+    from app.auth.jwt_utils import decode_access_token
+
+    payload = decode_access_token(token)
+    if payload is not None:
+        team_name = payload.get("team_name", "unknown")
+        role_str = payload.get("role", "dev")
+        try:
+            role = TeamRole(role_str)
+        except ValueError:
+            role = TeamRole.DEV
+        return TeamIdentity(team_name=team_name, role=role, token=token)
+
+    # Fallback: static DEV_TOKENS (dev/testing only)
     settings = get_settings()
     token_map = settings.get_token_map()
     team_name = token_map.get(token)

@@ -276,11 +276,35 @@ Full scaffold done. All pages, components, and API client in place. Health page 
 
 ---
 
-### Phase 3 — NOT STARTED
-Team use cases: BD prompt pack, Software Dev prompt pack, Management tools, per-team permission enforcement.
+### Phase 3 — COMPLETE (2026-05-06)
+Team use cases: BD + Dev prompt packs, memory tools, CRM AI summary, follow-up drafting, real mgmt reports.
 
-### Phase 4 — NOT STARTED
-Resilience: retry/dead-letter queues, caching, audit dashboard, per-team metrics.
+### Phase 5 — COMPLETE (2026-05-11)
+JWT-based authentication + admin user management replacing static bearer tokens.
+
+**Backend:**
+- `app/auth/jwt_utils.py` — NEW: `create_access_token()` / `decode_access_token()` using `python-jose`
+- `app/auth/bearer.py` — `verify_token()` now tries JWT first, falls back to `DEV_TOKENS` for dev/testing
+- `app/api/auth.py` — NEW: `POST /auth/login` (email+password → JWT), `GET /auth/me`
+- `app/api/admin.py` — Added user CRUD: `GET/POST /admin/users`, `PATCH/DELETE /admin/users/{id}`
+- `app/storage/models.py` — Added `User` model (email, hashed_password, role, team_name, is_active)
+- `app/config.py` — Added `JWT_SECRET_KEY`, `JWT_EXPIRE_MINUTES`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` settings
+- `app/main.py` — Includes `auth_router`; bootstraps an admin user on first startup if none exists
+- `alembic/versions/a1b2c3d4e5f6_add_users_table.py` — Migration for `users` table (already applied)
+
+**Frontend:**
+- `frontend/types/index.ts` — Added `User`, `LoginRequest`, `LoginResponse`, `CreateUserRequest`, `UpdateUserRequest`; `AuthState` extended with `email`, `full_name`, `user_id`
+- `frontend/lib/auth.ts` — `saveAuthFromLogin()` persists JWT + user profile; old `saveAuth()` kept as fallback
+- `frontend/lib/api.ts` — Added `loginUser()`, `listUsers()`, `createUser()`, `updateUser()`, `deactivateUser()`
+- `frontend/app/login/page.tsx` — Replaced token quick-select with email + password form
+- `frontend/app/dashboard/admin/page.tsx` — Added Users tab: list, create, role change, activate/deactivate
+- `frontend/components/Sidebar.tsx` — Shows `full_name` / `email` instead of team name in footer
+
+**Default admin credentials (change in .env):** `admin@syndrix.local` / `changeme`
+**DEV_TOKENS** still work as a fallback for MCP clients / API testing.
+
+### Phase 4 — COMPLETE (2026-05-06)
+Resilience: exponential-backoff retries, Redis caching, hybrid RAG search, live audit metrics, Celery Beat schedule.
 
 ---
 
@@ -411,3 +435,26 @@ cd frontend && npm install && npm run dev
 7. **Login card** — White background, dark Syndrix text, clean light-mode inputs.
 8. **Navigation** — Clicking Syndrix logo in sidebar goes to `/` (landing page). Landing page CTAs conditionally route to `/dashboard` or `/login` based on auth state. Fixed stale SSR cache with `force-dynamic`.
 9. **Footer simplified** — Landing page footer reduced to single `© 2026 All rights reserved.` line in white text.
+
+### Session 7 — 2026-05-06
+**What was done:** Implemented Phase 3 and Phase 4 in full.
+
+**Phase 3 — BD/Dev prompt packs, memory tools, CRM AI features:**
+1. **`app/services/prompt_service.py`** — BD + Dev + Shared prompt template registry. 10 templates total: `bd.crm_summary`, `bd.followup_draft`, `bd.lead_qualification`, `bd.meeting_notes`, `dev.spec_from_requirements`, `dev.bug_triage`, `dev.ticket_from_bug`, `dev.pr_review_summary`, `shared.summarize`, `shared.rag_answer`. Templates use `{variable}` substitution; `run_prompt()` fills variables, routes to correct Ollama model, and returns structured output.
+2. **`app/mcp_tools/prompt_tools.py`** — `prompt.list`, `prompt.run`, and 9 role-specific shortcut tools (`prompt.bd.*`, `prompt.dev.*`, `prompt.summarize`). Registered in `main.py`.
+3. **`app/mcp_tools/memory_tools.py`** — `memory.store`, `memory.retrieve`, `memory.recent`. All roles permitted. Registered in `main.py`.
+4. **`app/mcp_tools/crm_tools.py`** — Added `crm.contact.summary` (fetches contact → AI summary via bd.crm_summary prompt) and `crm.followup.draft` (fetches contact → AI draft follow-up via bd.followup_draft prompt).
+5. **`app/mcp_tools/mgmt_tools.py`** — `report.team.daily` now queries live audit log and aggregates invocations/success/failure/latency per team. Added `report.tool.usage` tool. `client.health.score` now fetches real contact from Podio and computes scored dimensions.
+6. **`app/auth/rbac.py`** — Added `prompt.bd.*`, `prompt.dev.*`, `prompt.*`, `memory.*` prefix permissions.
+
+**Phase 4 — Caching, retries, periodic tasks, real metrics:**
+7. **`app/services/rag.py`** — Hybrid search: vector pool 3× limit + keyword re-ranking (70/30 blend). Redis cache on search results (TTL_MED=300s). Cache invalidated on new ingest.
+8. **`app/services/cache.py`** — Wired: `cache_service.set_redis(redis_client)` added to `main.py` startup lifespan.
+9. **`app/workers/jobs.py`** — Exponential backoff on all retried tasks (`_backoff(retries, base, cap)`). Added `jobs.generate_daily_report` (pre-caches daily report) and `jobs.cleanup_audit_logs` (trims Redis list).
+10. **`app/workers/periodic.py`** — NEW. Celery Beat schedule: daily report nightly, vector index weekly, CRM sync every 6h, audit log cleanup weekly. Start with `celery -A app.workers.periodic beat`.
+11. **`app/api/admin.py`** — `/admin/metrics` now returns live data: uptime, total requests, success/failure counts, error rate, avg latency, top tools, top teams — all from audit log. Added `_START_TIME` module variable.
+12. **Frontend — `frontend/app/dashboard/prompts/page.tsx`** — NEW. Prompt Packs page: category filter pills, template cards (with variable chips), dynamic variable form (textarea for long fields, input for short), Run button, copy-to-clipboard output card.
+13. **Frontend — `frontend/components/Sidebar.tsx`** — Added Prompt Packs link (all roles) with lightning-charge icon.
+14. **Frontend — `frontend/app/dashboard/admin/page.tsx`** — Metrics tab redesigned: stat cards (uptime, requests, error rate, latency), top tools/teams horizontal bar charts, registry count cards.
+15. **Frontend — `frontend/lib/api.ts`** — Added `fetchPromptList()` and `runPrompt()` that call `/tools/invoke` and unwrap the `result` envelope.
+16. **Frontend — `frontend/types/index.ts`** — Added `PromptTemplate` and `PromptRunResult` types.

@@ -101,3 +101,81 @@ def register_crm_tools(mcp: FastMCP) -> None:
         except Exception as exc:
             logger.error("crm.email.send_failed", error=str(exc))
             return {"success": False, "to": to, "error": str(exc)}
+
+    @mcp.tool(
+        name="crm.contact.summary",
+        description=(
+            "Fetch a CRM contact by ID and generate an AI-written summary with talking points "
+            "and a recommended next action."
+        ),
+    )
+    async def crm_contact_summary(contact_id: str) -> dict[str, Any]:
+        from app.adapters.podio import podio_adapter
+        from app.services.prompt_service import run_prompt
+        import json
+
+        logger.info("crm.contact.summary_called", contact_id=contact_id)
+        try:
+            contact = await podio_adapter.get_contact(contact_id)
+            contact_str = json.dumps(contact, default=str, indent=2)
+            result = await run_prompt(
+                "bd.crm_summary",
+                {"contact_data": contact_str},
+                role="bd",
+            )
+            return {
+                "success": result.get("success", False),
+                "contact_id": contact_id,
+                "raw_contact": contact,
+                "summary": result.get("output", ""),
+                "error": result.get("error"),
+            }
+        except Exception as exc:
+            logger.error("crm.contact.summary_failed", error=str(exc))
+            return {"success": False, "contact_id": contact_id, "error": str(exc)}
+
+    @mcp.tool(
+        name="crm.followup.draft",
+        description=(
+            "Fetch a CRM contact by ID and draft a personalised follow-up message. "
+            "channel: 'email' | 'sms' | 'whatsapp'. goal: one sentence describing the purpose."
+        ),
+    )
+    async def crm_followup_draft(
+        contact_id: str,
+        goal: str,
+        channel: str = "email",
+        context: str = "",
+    ) -> dict[str, Any]:
+        from app.adapters.podio import podio_adapter
+        from app.services.prompt_service import run_prompt
+
+        logger.info("crm.followup.draft_called", contact_id=contact_id, channel=channel)
+        try:
+            contact = await podio_adapter.get_contact(contact_id)
+            name = contact.get("name") or contact.get("title") or f"Contact {contact_id}"
+            company = contact.get("company") or contact.get("org") or "their company"
+            last_interaction = context or contact.get("last_note") or "No prior context available"
+
+            result = await run_prompt(
+                "bd.followup_draft",
+                {
+                    "channel": channel,
+                    "contact_name": name,
+                    "company": company,
+                    "context": last_interaction,
+                    "goal": goal,
+                },
+                role="bd",
+            )
+            return {
+                "success": result.get("success", False),
+                "contact_id": contact_id,
+                "contact_name": name,
+                "channel": channel,
+                "draft": result.get("output", ""),
+                "error": result.get("error"),
+            }
+        except Exception as exc:
+            logger.error("crm.followup.draft_failed", error=str(exc))
+            return {"success": False, "contact_id": contact_id, "error": str(exc)}

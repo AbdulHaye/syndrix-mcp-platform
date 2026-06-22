@@ -8,6 +8,11 @@ import type {
   IngestRequest,
   IngestResult,
   AuditEntry,
+  LoginRequest,
+  LoginResponse,
+  User,
+  CreateUserRequest,
+  UpdateUserRequest,
 } from "@/types";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -37,6 +42,23 @@ async function request<T>(
   }
 
   return res.json() as Promise<T>;
+}
+
+// ── Auth ────────────────────────────────────────────────────────────────────
+
+export async function loginUser(body: LoginRequest): Promise<LoginResponse> {
+  const res = await fetch(`${BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let msg = `HTTP ${res.status}`;
+    try { msg = JSON.parse(text)?.detail ?? msg; } catch {}
+    throw new Error(msg);
+  }
+  return res.json() as Promise<LoginResponse>;
 }
 
 // ── Health ──────────────────────────────────────────────────────────────────
@@ -86,6 +108,72 @@ export async function fetchAuditLog(
 
 export async function fetchMetrics(): Promise<Record<string, unknown>> {
   return request("/admin/metrics");
+}
+
+// ── Prompts ───────────────────────────────────────────────────────────────────
+
+export async function fetchPromptList(role?: string): Promise<{
+  count: number;
+  templates: import("@/types").PromptTemplate[];
+}> {
+  const args = role ? { role } : {};
+  const envelope = await request<{ success: boolean; tool: string; result: { count: number; templates: import("@/types").PromptTemplate[] } }>(
+    "/tools/invoke",
+    {
+      method: "POST",
+      body: JSON.stringify({ tool: "prompt.list", args }),
+    }
+  );
+  const data = envelope.result ?? { count: 0, templates: [] };
+  return { count: data.count ?? 0, templates: data.templates ?? [] };
+}
+
+export async function runPrompt(
+  key: string,
+  variables: Record<string, string>,
+  role?: string
+): Promise<import("@/types").PromptRunResult> {
+  const args: Record<string, unknown> = { key, variables };
+  if (role) args.role = role;
+  const envelope = await request<{ success: boolean; tool: string; result: import("@/types").PromptRunResult }>(
+    "/tools/invoke",
+    {
+      method: "POST",
+      body: JSON.stringify({ tool: "prompt.run", args }),
+    }
+  );
+  return envelope.result ?? { success: false, key, error: "No result returned" };
+}
+
+// ── User Management ──────────────────────────────────────────────────────────
+
+export async function listUsers(): Promise<{ count: number; users: User[] }> {
+  return request("/admin/users");
+}
+
+export async function createUser(
+  body: CreateUserRequest
+): Promise<{ success: boolean; user: User }> {
+  return request("/admin/users", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateUser(
+  id: string,
+  body: UpdateUserRequest
+): Promise<{ success: boolean; user_id: string }> {
+  return request(`/admin/users/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deactivateUser(
+  id: string
+): Promise<{ success: boolean; user_id: string }> {
+  return request(`/admin/users/${id}`, { method: "DELETE" });
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────────

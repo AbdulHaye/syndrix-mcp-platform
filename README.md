@@ -109,7 +109,7 @@ UI is live at **http://localhost:3000**
 
 Log in with one of the quick-select team buttons on the login page.
 
----
+---                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
 
 ## Default dev tokens
 

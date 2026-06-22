@@ -30,14 +30,27 @@ class Settings(BaseSettings):
     ollama_default_model: str
     ollama_embed_model: str
 
+    # JWT
+    jwt_secret_key: str = ""
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 480
+
+    # Bootstrap admin (used once on first startup if no admin user exists)
+    admin_email: str = "admin@syndrix.local"
+    admin_password: str = "changeme"
+
     # Raw dev tokens string from env (format: team_name:token,team_name:token)
-    dev_tokens: str
+    dev_tokens: str = ""
 
     # Parsed token map — token -> team_name
     _token_map: dict[str, str] = {}
 
     @model_validator(mode="after")
     def parse_dev_tokens(self) -> "Settings":
+        # Use secret_key as JWT secret if jwt_secret_key not explicitly set
+        if not self.jwt_secret_key:
+            self.jwt_secret_key = self.secret_key
+
         token_map: dict[str, str] = {}
         raw = self.dev_tokens.strip()
         if raw:

@@ -1,9 +1,34 @@
 "use client";
 
-import type { AuthState, TeamRole } from "@/types";
+import type { AuthState, LoginResponse, TeamRole } from "@/types";
 
 const STORAGE_KEY = "mcp_auth";
 const COOKIE_NAME = "mcp_token";
+
+export function saveAuthFromLogin(response: LoginResponse): void {
+  const state: AuthState = {
+    token: response.access_token,
+    team: response.user.team_name,
+    role: response.user.role as TeamRole,
+    email: response.user.email,
+    full_name: response.user.full_name ?? undefined,
+    user_id: response.user.id,
+  };
+  if (typeof window !== "undefined") {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    document.cookie = `${COOKIE_NAME}=${response.access_token}; path=/; max-age=86400; SameSite=Strict`;
+  }
+}
+
+/** @deprecated Use saveAuthFromLogin for JWT auth. Kept for DEV_TOKEN fallback. */
+export function saveAuth(token: string, team: string): void {
+  const role = inferRole(team);
+  const state: AuthState = { token, team, role };
+  if (typeof window !== "undefined") {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    document.cookie = `${COOKIE_NAME}=${token}; path=/; max-age=86400; SameSite=Strict`;
+  }
+}
 
 function inferRole(team: string): TeamRole {
   const t = team.toLowerCase();
@@ -12,15 +37,6 @@ function inferRole(team: string): TeamRole {
   if (t.includes("mgmt") || t.includes("management")) return "mgmt";
   if (t.includes("admin")) return "admin";
   return "dev";
-}
-
-export function saveAuth(token: string, team: string): void {
-  const role = inferRole(team);
-  const state: AuthState = { token, team, role };
-  if (typeof window !== "undefined") {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    document.cookie = `${COOKIE_NAME}=${token}; path=/; max-age=86400; SameSite=Strict`;
-  }
 }
 
 export function getAuth(): AuthState | null {

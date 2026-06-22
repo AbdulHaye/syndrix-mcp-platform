@@ -81,6 +81,29 @@ class IntegrationSetting(Base):
         return f"<IntegrationSetting key={self.key!r}>"
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    email: Mapped[str] = mapped_column(String(256), unique=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(512), nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    team_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    role: Mapped[str] = mapped_column(String(64), nullable=False, default="dev")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<User id={self.id} email={self.email!r} role={self.role}>"
+
+
 class TeamToken(Base):
     __tablename__ = "team_tokens"
 

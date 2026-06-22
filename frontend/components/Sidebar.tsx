@@ -30,8 +30,9 @@ const ALL_TEAM_ITEMS: SubItem[] = [
 ];
 
 const ALL_SHARED_ITEMS: SubItem[] = [
-  { label: "Knowledge Base", href: "/dashboard/rag",   icon: "bi-journal-bookmark-fill", roles: ["bd", "dev", "mgmt", "admin"] },
-  { label: "Admin",          href: "/dashboard/admin", icon: "bi-shield-lock-fill",      roles: ["admin"] },
+  { label: "Knowledge Base", href: "/dashboard/rag",     icon: "bi-journal-bookmark-fill", roles: ["bd", "dev", "mgmt", "admin"] },
+  { label: "Prompt Packs",   href: "/dashboard/prompts", icon: "bi-lightning-charge-fill", roles: ["bd", "dev", "mgmt", "admin"] },
+  { label: "Admin",          href: "/dashboard/admin",   icon: "bi-shield-lock-fill",      roles: ["admin"] },
 ];
 
 function AccordionGroup({
@@ -84,8 +85,9 @@ export default function Sidebar() {
     router.push("/login");
   }
 
-  const initials = (auth?.team ?? "U")
-    .split(/[\s_\-]/)
+  const displayName = auth?.full_name || auth?.email || auth?.team || "Guest";
+  const initials = displayName
+    .split(/[\s_\-@]/)
     .slice(0, 2)
     .map((w: string) => w[0]?.toUpperCase() ?? "")
     .join("");
@@ -152,6 +154,12 @@ export default function Sidebar() {
             role={role} pathname={pathname} onLinkClick={close}
           />
           <AccordionGroup
+            icon="bi-lightning-charge-fill" iconBg="rgba(245,158,11,0.75)"
+            label="Prompt Packs"
+            items={ALL_SHARED_ITEMS.filter((i) => i.href === "/dashboard/prompts")}
+            role={role} pathname={pathname} onLinkClick={close}
+          />
+          <AccordionGroup
             icon="bi-shield-lock-fill" iconBg="rgba(239,68,68,0.75)"
             label="Admin"
             items={ALL_SHARED_ITEMS.filter((i) => i.href === "/dashboard/admin")}
@@ -182,7 +190,7 @@ export default function Sidebar() {
           <div className="sb-user-row">
             <div className="sb-avatar">{initials}</div>
             <div style={{ overflow: "hidden", flex: 1, minWidth: 0 }}>
-              <div className="sb-user-name">{auth?.team ?? "Guest"}</div>
+              <div className="sb-user-name">{displayName}</div>
               <div className="sb-user-role">{getRoleLabel(role)}</div>
             </div>
           </div>

@@ -17,6 +17,11 @@ TOOL_PERMISSIONS: dict[str, list[TeamRole]] = {
     "client.": [TeamRole.MGMT, TeamRole.ADMIN],
     "health.": [TeamRole.BD, TeamRole.DEV, TeamRole.MGMT, TeamRole.ADMIN],
     "rag.": [TeamRole.BD, TeamRole.DEV, TeamRole.MGMT, TeamRole.ADMIN],
+    # Phase 3
+    "prompt.bd.": [TeamRole.BD, TeamRole.ADMIN],
+    "prompt.dev.": [TeamRole.DEV, TeamRole.ADMIN],
+    "prompt.": [TeamRole.BD, TeamRole.DEV, TeamRole.MGMT, TeamRole.ADMIN],
+    "memory.": [TeamRole.BD, TeamRole.DEV, TeamRole.MGMT, TeamRole.ADMIN],
 }
 
 

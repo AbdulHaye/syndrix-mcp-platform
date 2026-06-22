@@ -55,12 +55,16 @@ from app.mcp_tools.crm_tools import register_crm_tools  # noqa: E402
 from app.mcp_tools.dev_tools import register_dev_tools  # noqa: E402
 from app.mcp_tools.mgmt_tools import register_mgmt_tools  # noqa: E402
 from app.mcp_tools.rag_tools import register_rag_tools  # noqa: E402
+from app.mcp_tools.prompt_tools import register_prompt_tools  # noqa: E402
+from app.mcp_tools.memory_tools import register_memory_tools  # noqa: E402
 
 register_health_tools(mcp_server)
 register_crm_tools(mcp_server)
 register_dev_tools(mcp_server)
 register_mgmt_tools(mcp_server)
 register_rag_tools(mcp_server)
+register_prompt_tools(mcp_server)
+register_memory_tools(mcp_server)
 
 # ---------------------------------------------------------------------------
 # Lifespan: startup / shutdown
@@ -98,14 +102,47 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Wire Redis into services that need it
         from app.services.audit import audit_service
         from app.services.memory import memory_service
+        from app.services.cache import cache_service
         audit_service.set_redis(redis_client)
         memory_service.set_redis(redis_client)
+        cache_service.set_redis(redis_client)
 
         # Store on app state for health checks and other access
         app.state.redis = redis_client
     except Exception as exc:  # noqa: BLE001
         log.error("redis_connect_failed", error=str(exc))
         app.state.redis = None
+
+    # Bootstrap admin user (once, if no admin exists in DB)
+    try:
+        import uuid as _uuid
+        from sqlalchemy import select
+        from app.storage.db import get_db
+        from app.storage.models import User
+        from passlib.context import CryptContext
+
+        _pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+        async with get_db() as session:
+            existing = await session.execute(
+                select(User).where(User.role == "admin").limit(1)
+            )
+            if existing.scalar_one_or_none() is None:
+                admin = User(
+                    id=_uuid.uuid4(),
+                    email=settings.admin_email,
+                    hashed_password=_pwd_ctx.hash(settings.admin_password),
+                    full_name="Admin",
+                    team_name="admin_team",
+                    role="admin",
+                    is_active=True,
+                )
+                session.add(admin)
+                log.info("admin_user_created", email=settings.admin_email)
+            else:
+                log.info("admin_user_exists")
+    except Exception as exc:  # noqa: BLE001
+        log.error("admin_bootstrap_failed", error=str(exc))
 
     log.info("platform_ready", host=settings.api_host, port=settings.api_port)
 
@@ -144,7 +181,7 @@ app = FastAPI(
 # CORS — open in dev, restrict in prod
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -175,10 +212,12 @@ async def log_requests(request: Request, call_next: Any) -> Response:
 # ---------------------------------------------------------------------------
 from app.api.health import router as health_router  # noqa: E402
 from app.api.admin import router as admin_router  # noqa: E402
+from app.api.auth import router as auth_router  # noqa: E402
 from app.api.ingest import router as ingest_router  # noqa: E402
 from app.api.tools import router as tools_router  # noqa: E402
 from app.api.settings import router as settings_router  # noqa: E402
 
+app.include_router(auth_router)
 app.include_router(health_router)
 app.include_router(admin_router)
 app.include_router(ingest_router)

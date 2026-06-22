@@ -14,7 +14,10 @@
       "Bash(findstr /i \"PGVECTOR\" .env)",
       "Bash(findstr /i \"pgvector\")",
       "Bash(python -c \"from app.api.settings import router; from app.services.settings_service import get_setting, get_all_settings; print\\('imports OK'\\)\")",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(alembic upgrade *)",
+      "Bash(python -c \"from app.api.auth import router; from app.auth.jwt_utils import create_access_token, decode_access_token; from app.storage.models import User; print\\('imports OK'\\)\")",
+      "Bash(python *)"
     ]
   }
 }

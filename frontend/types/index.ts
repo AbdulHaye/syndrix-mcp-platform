@@ -4,6 +4,53 @@ export interface AuthState {
   token: string;
   team: string;
   role: TeamRole;
+  email?: string;
+  full_name?: string;
+  user_id?: string;
+}
+
+export interface User {
+  id: string;
+  email: string;
+  full_name: string | null;
+  team_name: string;
+  role: TeamRole;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  user: {
+    id: string;
+    email: string;
+    full_name: string | null;
+    team_name: string;
+    role: TeamRole;
+    is_active: boolean;
+  };
+}
+
+export interface CreateUserRequest {
+  email: string;
+  password: string;
+  full_name?: string;
+  team_name: string;
+  role: TeamRole;
+}
+
+export interface UpdateUserRequest {
+  full_name?: string;
+  team_name?: string;
+  role?: TeamRole;
+  is_active?: boolean;
+  password?: string;
 }
 
 export interface HealthStatus {
@@ -72,4 +119,22 @@ export interface NavItem {
   href: string;
   icon: string;
   roles: TeamRole[];
+}
+
+export interface PromptTemplate {
+  key: string;
+  title: string;
+  description: string;
+  category: "bd" | "dev" | "shared";
+  variables: string[];
+}
+
+export interface PromptRunResult {
+  success: boolean;
+  key: string;
+  title?: string;
+  output?: string;
+  model?: string;
+  error?: string;
+  required?: string[];
 }
