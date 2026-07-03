@@ -13,6 +13,10 @@ export interface ToastItem {
 interface ToastCtx {
   toasts: ToastItem[];
   toast: (type: ToastType, message: string) => void;
+  success: (message: string) => void;
+  error: (message: string) => void;
+  info: (message: string) => void;
+  warning: (message: string) => void;
   dismiss: (id: string) => void;
 }
 
@@ -34,13 +38,22 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     setTimeout(() => dispatch({ type: "REMOVE", id }), 4500);
   }, []);
 
+  // Convenience methods so callers can use either toast("error", msg)
+  // or toast.error(msg).
+  const success = useCallback((message: string) => toast("success", message), [toast]);
+  const error = useCallback((message: string) => toast("error", message), [toast]);
+  const info = useCallback((message: string) => toast("info", message), [toast]);
+  const warning = useCallback((message: string) => toast("warning", message), [toast]);
+
   const dismiss = useCallback(
     (id: string) => dispatch({ type: "REMOVE", id }),
     []
   );
 
   return (
-    <Ctx.Provider value={{ toasts, toast, dismiss }}>{children}</Ctx.Provider>
+    <Ctx.Provider value={{ toasts, toast, success, error, info, warning, dismiss }}>
+      {children}
+    </Ctx.Provider>
   );
 }
 

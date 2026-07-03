@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from functools import lru_cache
+
+from dotenv import load_dotenv
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Load .env into os.environ early so plain os.environ.get() lookups
+# (e.g. PGVECTOR_ENABLED in storage modules) see the configured values.
+load_dotenv()
 
 
 class Settings(BaseSettings):
@@ -33,7 +39,7 @@ class Settings(BaseSettings):
     # JWT
     jwt_secret_key: str = ""
     jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 480
+    jwt_expire_minutes: int = 1440
 
     # Bootstrap admin (used once on first startup if no admin user exists)
     admin_email: str = "admin@syndrix.local"

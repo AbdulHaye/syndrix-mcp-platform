@@ -17,7 +17,28 @@
       "Bash(python -c ' *)",
       "Bash(alembic upgrade *)",
       "Bash(python -c \"from app.api.auth import router; from app.auth.jwt_utils import create_access_token, decode_access_token; from app.storage.models import User; print\\('imports OK'\\)\")",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(curl -s -X POST http://localhost:11434/api/chat -d '{\"model\":\"llama3:latest\",\"stream\":false,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"t\",\"description\":\"d\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}}]}')",
+      "Bash(npx --no-install tsc --noEmit)",
+      "WebSearch",
+      "WebFetch(domain:developers.podio.com)",
+      "WebFetch(domain:docs.sharefile.com)",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/health\" -TimeoutSec 3 -UseBasicParsing; Write-Output \"Backend UP: $\\($r.StatusCode\\)\" } catch { Write-Output \"Backend DOWN: $_\" })",
+      "PowerShell($body = '{\"email\":\"admin@syndrix.local\",\"password\":\"changeme\"}'; try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/auth/login\" -Method POST -ContentType \"application/json\" -Body $body -UseBasicParsing -TimeoutSec 5; Write-Output \"Status: $\\($r.StatusCode\\)\"; Write-Output $r.Content } catch { Write-Output \"Error: $_\"; Write-Output $_.Exception.Response.StatusCode })",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/auth/login\" -Method POST -ContentType \"application/json\" -Body '{\"email\":\"admin@syndrix.local\",\"password\":\"changeme\"}' -UseBasicParsing -TimeoutSec 5 -ErrorAction SilentlyContinue; Write-Output \"Status: $\\($r.StatusCode\\)\"; Write-Output $r.Content } catch [System.Net.WebException] { $resp = $_.Exception.Response; if \\($resp\\) { $stream = $resp.GetResponseStream\\(\\); $reader = New-Object System.IO.StreamReader\\($stream\\); Write-Output \"Status: $\\($resp.StatusCode\\)\"; Write-Output $reader.ReadToEnd\\(\\) } else { Write-Output \"No response: $_\" } })",
+      "PowerShell(pip show *)",
+      "PowerShell(python -c \"from passlib.context import CryptContext; ctx = CryptContext\\(schemes=['bcrypt'], deprecated='auto'\\); print\\(ctx.hash\\('changeme'\\)\\)\")",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/health\" -UseBasicParsing -TimeoutSec 5; Write-Output $r.Content } catch { Write-Output \"Error: $_\" })",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/health/detailed\" -UseBasicParsing -TimeoutSec 5 -Headers @{Authorization=\"Bearer bd-secret-token-123\"}; Write-Output $r.Content } catch { Write-Output \"Error: $_\" })",
+      "PowerShell(psql *)",
+      "PowerShell(Restart-Service *)",
+      "PowerShell(Get-Content \"C:\\\\Program Files\\\\PostgreSQL\\\\18\\\\data\\\\pg_hba.conf\" | Where-Object { $_ -notmatch \"^#\" -and $_.Trim\\(\\) -ne \"\" })",
+      "PowerShell($pid_file = \"C:\\\\Program Files\\\\PostgreSQL\\\\18\\\\data\\\\postmaster.pid\"; if \\(Test-Path $pid_file\\) { $pid_content = Get-Content $pid_file; Write-Output \"postmaster.pid content:\"; $pid_content; $pg_pid = [int]\\($pid_content[0]\\); Write-Output \"\"; Write-Output \"Process with PID $pg_pid`:\"; Get-Process -Id $pg_pid -ErrorAction SilentlyContinue | Select-Object Name, Id, CPU, WorkingSet } else { Write-Output \"postmaster.pid not found\" })",
+      "PowerShell($body = '{\"email\":\"admin@syndrix.local\",\"password\":\"changeme\"}'; [System.IO.File]::WriteAllText\\(\"C:\\\\Temp\\\\login_body.json\", $body\\); curl.exe -s -X POST http://localhost:8000/auth/login -H \"Content-Type: application/json\" -d @C:\\\\Temp\\\\login_body.json -w \"\\\\nHTTP:%{http_code}\")",
+      "WebFetch(domain:workflow-automation.podio.com)",
+      "WebFetch(domain:procfu.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:web.archive.org)"
     ]
   }
 }

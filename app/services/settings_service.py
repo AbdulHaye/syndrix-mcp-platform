@@ -6,7 +6,13 @@ from sqlalchemy import select
 logger = structlog.get_logger(__name__)
 
 _SECRET_KEYS = frozenset({
-    "podio_client_secret",
+    "podio_mcp_client_secret",
+    "podio_rest_client_secret",
+    "google_api_key",
+    "groq_api_key",
+    "mistral_api_key",
+    "openai_api_key",
+    "anthropic_api_key",
     "ghl_api_key",
     "slack_bot_token",
     "slack_signing_secret",
@@ -15,9 +21,15 @@ _SECRET_KEYS = frozenset({
 })
 
 ALL_SETTING_KEYS: list[str] = [
-    "podio_client_id",
-    "podio_client_secret",
-    "podio_app_id",
+    "podio_mcp_client_id",
+    "podio_mcp_client_secret",
+    "podio_rest_client_id",
+    "podio_rest_client_secret",
+    "google_api_key",
+    "groq_api_key",
+    "mistral_api_key",
+    "openai_api_key",
+    "anthropic_api_key",
     "ghl_api_key",
     "ghl_location_id",
     "slack_bot_token",

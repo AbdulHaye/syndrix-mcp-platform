@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { clearAuth, getAuth, getRoleLabel } from "@/lib/auth";
@@ -24,10 +24,13 @@ function SyndrixLogo() {
 interface SubItem { label: string; href: string; icon: string; roles: TeamRole[] }
 
 const ALL_TEAM_ITEMS: SubItem[] = [
-  { label: "CRM Tools",  href: "/dashboard/crm",  icon: "bi-people-fill",    roles: ["bd", "admin"] },
-  { label: "Dev Tools",  href: "/dashboard/dev",  icon: "bi-code-slash",     roles: ["dev", "admin"] },
-  { label: "Management", href: "/dashboard/mgmt", icon: "bi-bar-chart-line", roles: ["mgmt", "admin"] },
+  { label: "CRM Tools",   href: "/dashboard/crm",         icon: "bi-people-fill",    roles: ["bd", "admin"] },
+  { label: "Dev Tools",   href: "/dashboard/dev",         icon: "bi-code-slash",     roles: ["dev", "admin"] },
+  { label: "Management",  href: "/dashboard/mgmt",        icon: "bi-bar-chart-line", roles: ["mgmt", "admin"] },
 ];
+
+// Podio Agent is a top-level item directly under the Team Tools section.
+const PODIO_AGENT_ROLES: TeamRole[] = ["bd", "admin"];
 
 const ALL_SHARED_ITEMS: SubItem[] = [
   { label: "Knowledge Base", href: "/dashboard/rag",     icon: "bi-journal-bookmark-fill", roles: ["bd", "dev", "mgmt", "admin"] },
@@ -75,7 +78,11 @@ function AccordionGroup({
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const auth = getAuth();
+  // getAuth() reads localStorage (empty during SSR). Defer it to after mount so the
+  // first client render matches the server HTML and avoids a hydration mismatch.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const auth = mounted ? getAuth() : null;
   const role = (auth?.role ?? "dev") as TeamRole;
   const { open, close } = useSidebar();
 
@@ -124,6 +131,24 @@ export default function Sidebar() {
 
           {/* ── 2. Team Tools ── */}
           <div className="sb-group-label">Team Tools</div>
+          {PODIO_AGENT_ROLES.includes(role) && (
+            <Link
+              href="/dashboard/podio-agent"
+              className={`sb-single${pathname.startsWith("/dashboard/podio-agent") ? " active" : ""}`}
+              onClick={close}
+            >
+              <div
+                className="sb-section-icon"
+                style={{ background: pathname.startsWith("/dashboard/podio-agent") ? "rgba(99,102,241,0.25)" : "rgba(255,255,255,0.06)" }}
+              >
+                <i
+                  className="bi bi-robot"
+                  style={{ color: pathname.startsWith("/dashboard/podio-agent") ? "#a5b4fc" : "#94a3b8", fontSize: "0.85rem" }}
+                />
+              </div>
+              Podio Agent
+            </Link>
+          )}
           <AccordionGroup
             icon="bi-people-fill" iconBg="rgba(16,185,129,0.75)"
             label="CRM & BD"

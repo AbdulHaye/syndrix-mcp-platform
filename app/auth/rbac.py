@@ -22,6 +22,8 @@ TOOL_PERMISSIONS: dict[str, list[TeamRole]] = {
     "prompt.dev.": [TeamRole.DEV, TeamRole.ADMIN],
     "prompt.": [TeamRole.BD, TeamRole.DEV, TeamRole.MGMT, TeamRole.ADMIN],
     "memory.": [TeamRole.BD, TeamRole.DEV, TeamRole.MGMT, TeamRole.ADMIN],
+    # Podio Agent (LLM + Podio tools) — BD + Admin
+    "agent.": [TeamRole.BD, TeamRole.ADMIN],
 }
 
 

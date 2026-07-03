@@ -34,11 +34,12 @@ async function request<T>(
 
   if (!res.ok) {
     const text = await res.text();
-    let msg = `HTTP ${res.status}`;
+    let detail = "";
     try {
-      msg = JSON.parse(text)?.detail ?? msg;
+      detail = JSON.parse(text)?.detail ?? "";
     } catch {}
-    throw new Error(msg);
+    // Always prefix with status so callers can branch on 401/403 reliably
+    throw new Error(`${res.status}: ${detail || res.statusText}`);
   }
 
   return res.json() as Promise<T>;
@@ -143,6 +144,169 @@ export async function runPrompt(
     }
   );
   return envelope.result ?? { success: false, key, error: "No result returned" };
+}
+
+// ── Podio Agent ───────────────────────────────────────────────────────────────
+
+export async function runPodioAgent(
+  message: string,
+  history: { role: string; content: string }[] = []
+): Promise<import("@/types").PodioAgentResponse> {
+  return request<import("@/types").PodioAgentResponse>("/agent/podio", {
+    method: "POST",
+    body: JSON.stringify({ message, history }),
+  });
+}
+
+// ── Podio MCP connection (OAuth) ──────────────────────────────────────────────
+
+export interface PodioSelectedWorkspace {
+  space_id: number | string;
+  name: string | null;
+  org_name: string | null;
+}
+
+export async function getPodioStatus(): Promise<{ connected: boolean; workspace: PodioSelectedWorkspace | null }> {
+  return request("/integrations/podio/status");
+}
+
+export async function listPodioOrganizations(): Promise<{
+  success: boolean;
+  organizations: { org_id: number; name: string; spaces_count?: number }[];
+  error?: string;
+}> {
+  return request("/integrations/podio/organizations");
+}
+
+export async function listPodioSpaces(orgId: number): Promise<{
+  success: boolean;
+  spaces: { space_id: number; name: string; org_id?: number }[];
+  error?: string;
+}> {
+  return request(`/integrations/podio/spaces?org_id=${orgId}`);
+}
+
+export async function setPodioWorkspace(
+  spaceId: number,
+  name?: string | null,
+  orgName?: string | null
+): Promise<{ success: boolean; space_id: number; name: string | null }> {
+  return request("/integrations/podio/workspace", {
+    method: "POST",
+    body: JSON.stringify({ space_id: spaceId, name: name ?? null, org_name: orgName ?? null }),
+  });
+}
+
+export async function startPodioConnect(): Promise<{ success: boolean; authorize_url?: string; error?: string }> {
+  return request("/integrations/podio/connect");
+}
+
+export async function getPodioTools(): Promise<{ success: boolean; count?: number; tools?: string[]; error?: string }> {
+  return request("/integrations/podio/tools");
+}
+
+export async function disconnectPodio(): Promise<{ success: boolean }> {
+  return request("/integrations/podio/disconnect", { method: "POST" });
+}
+
+// ── Podio Files (custom MCP server: REST upload + attach) ─────────────────────
+
+export async function getPodioFilesStatus(): Promise<{ connected: boolean }> {
+  return request("/integrations/podio-files/status");
+}
+
+export async function startPodioFilesConnect(): Promise<{ success: boolean; authorize_url?: string; error?: string }> {
+  return request("/integrations/podio-files/connect");
+}
+
+export async function disconnectPodioFiles(): Promise<{ success: boolean }> {
+  return request("/integrations/podio-files/disconnect", { method: "POST" });
+}
+
+export async function downloadPodioFile(fileId: number, filename?: string): Promise<void> {
+  const auth = getAuth();
+  const res = await fetch(`${BASE}/integrations/podio-files/download/${fileId}`, {
+    headers: auth?.token ? { Authorization: `Bearer ${auth.token}` } : undefined,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let msg = `HTTP ${res.status}`;
+    try { msg = JSON.parse(text)?.detail ?? msg; } catch {}
+    throw new Error(msg);
+  }
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const nameMatch = disposition.match(/filename="([^"]+)"/);
+  const name = filename || nameMatch?.[1] || `podio_file_${fileId}`;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function downloadPodioExport(appId: number, filename?: string): Promise<void> {
+  const auth = getAuth();
+  const res = await fetch(`${BASE}/integrations/podio-files/export/${appId}`, {
+    headers: auth?.token ? { Authorization: `Bearer ${auth.token}` } : undefined,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let msg = `HTTP ${res.status}`;
+    try { msg = JSON.parse(text)?.detail ?? msg; } catch {}
+    throw new Error(msg);
+  }
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const nameMatch = disposition.match(/filename="([^"]+)"/);
+  const name = filename || nameMatch?.[1] || `podio_export_${appId}.xlsx`;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function uploadPodioFile(
+  file: File,
+  itemId?: number,
+): Promise<{ success: boolean; file_id?: number; filename?: string; attached_to_item?: number; error?: string }> {
+  const auth = getAuth();
+  const form = new FormData();
+  form.append("file", file);
+  if (itemId != null) form.append("item_id", String(itemId));
+  const res = await fetch(`${BASE}/integrations/podio-files/upload`, {
+    method: "POST",
+    headers: auth?.token ? { Authorization: `Bearer ${auth.token}` } : undefined,
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let msg = `HTTP ${res.status}`;
+    try { msg = JSON.parse(text)?.detail ?? msg; } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+// ── LLM model selection ───────────────────────────────────────────────────────
+
+export async function listLlmModels(): Promise<{
+  ollama: string[];
+  google: string[];
+  groq: string[];
+  mistral: string[];
+  openai: string[];
+  anthropic: string[];
+  selected: string;
+}> {
+  return request("/llm/models");
+}
+
+export async function setLlmModel(model: string): Promise<{ success: boolean; model: string }> {
+  return request("/llm/model", { method: "POST", body: JSON.stringify({ model }) });
 }
 
 // ── User Management ──────────────────────────────────────────────────────────

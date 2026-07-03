@@ -138,3 +138,40 @@ export interface PromptRunResult {
   error?: string;
   required?: string[];
 }
+
+// ── Podio Agent ───────────────────────────────────────────────────────────────
+
+export interface PodioAgentStep {
+  tool: string;
+  args: Record<string, unknown>;
+  result: unknown;
+}
+
+export interface PodioAgentResponse {
+  success: boolean;
+  reply: string;
+  steps: PodioAgentStep[];
+  model?: string;
+  error?: string;
+}
+
+export interface PodioChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  steps?: PodioAgentStep[];
+  error?: boolean;
+}
+
+export interface PodioWorkspace {
+  space_id: number;
+  name: string | null;
+  org_id?: number | null;
+  org_name?: string | null;
+}
+
+export interface PodioWorkspacesResponse {
+  success: boolean;
+  workspaces: PodioWorkspace[];
+  current_space_id: number | null;
+  error?: string;
+}

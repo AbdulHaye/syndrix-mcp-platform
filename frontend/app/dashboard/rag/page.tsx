@@ -158,7 +158,7 @@ export default function RagPage() {
                   <button className="btn btn-primary mb-3" style={{ background: "var(--primary)", border: "none" }} onClick={runSearch} disabled={searchLoading || !searchQuery}>
                     {searchLoading ? <><span className="spinner-border spinner-border-sm me-2" />Searching…</> : <><i className="bi bi-search me-2" />Search</>}
                   </button>
-                  {searchLoading && <SkeletonTable rows={searchLimit} cols={3} />}
+                  {searchLoading && <SkeletonTable rows={searchLimit} />}
                   {!searchLoading && searchInvocation && (
                     <div>
                       <div className="small fw-semibold text-muted mb-2">Results</div>

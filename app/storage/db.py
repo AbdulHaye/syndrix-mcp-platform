@@ -35,6 +35,7 @@ def _get_engine() -> AsyncEngine:
             pool_pre_ping=True,
             pool_size=10,
             max_overflow=20,
+            pool_recycle=1800,  # recycle connections every 30 min
         )
     return _engine
 
@@ -65,15 +66,24 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db() -> None:
     """Create all tables defined in the ORM metadata."""
+    import os
+
     from app.storage import models  # noqa: F401
     from sqlalchemy import text
 
     engine = _get_engine()
-    async with engine.begin() as conn:
+
+    # Attempt the pgvector extension only when enabled, in its OWN transaction —
+    # if the extension is absent the statement aborts the transaction, which
+    # would otherwise poison the create_all below.
+    if os.environ.get("PGVECTOR_ENABLED", "true").lower() != "false":
         try:
-            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            async with engine.begin() as conn:
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         except Exception:
             logger.warning("pgvector_extension_unavailable", msg="pgvector not installed; vector search disabled")
+
+    async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("database_tables_created")
 

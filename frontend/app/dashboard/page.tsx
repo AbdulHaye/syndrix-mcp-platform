@@ -65,7 +65,15 @@ function ServiceCard({ name, info }: { name: string; info: { status: string; det
 }
 
 export default function DashboardPage() {
-  const auth = getAuth();
+  // getAuth() (localStorage) and new Date() differ between SSR and the client, which
+  // causes hydration mismatches. Defer both to after mount.
+  const [mounted, setMounted] = useState(false);
+  const [now, setNow] = useState<Date | null>(null);
+  useEffect(() => {
+    setMounted(true);
+    setNow(new Date());
+  }, []);
+  const auth = mounted ? getAuth() : null;
   const role = auth?.role ?? "dev";
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -94,13 +102,13 @@ export default function DashboardPage() {
     ? Object.values(health.services).filter((s) => s.status === "ok").length
     : 0;
 
-  const now = new Date();
-  const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const dateStr = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+  const timeStr = now?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) ?? "";
+  const dateStr = now?.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }) ?? "";
+  const subtitle = now ? `${dateStr} · ${timeStr}` : "Syndrix AI Hub";
 
   return (
     <>
-      <Topbar title="Overview" subtitle={`${dateStr} · ${timeStr}`} />
+      <Topbar title="Overview" subtitle={subtitle} />
 
       <div className="page-body fade-in">
         {/* ── Page header ── */}
