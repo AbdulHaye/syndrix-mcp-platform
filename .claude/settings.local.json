@@ -38,7 +38,8 @@
       "WebFetch(domain:workflow-automation.podio.com)",
       "WebFetch(domain:procfu.com)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:web.archive.org)"
+      "WebFetch(domain:web.archive.org)",
+      "PowerShell(Stop-Service *)"
     ]
   }
 }
