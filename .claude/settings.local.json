@@ -39,7 +39,11 @@
       "WebFetch(domain:procfu.com)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:web.archive.org)",
-      "PowerShell(Stop-Service *)"
+      "PowerShell(Stop-Service *)",
+      "PowerShell($env:PGPASSWORD='mcp_pass'; & \"C:\\\\Program Files\\\\PostgreSQL\\\\18\\\\bin\\\\psql.exe\" -h localhost -p 5432 -U mcp_user -d syndrix -c \"SELECT version\\(\\);\" 2>&1; & \"C:\\\\Program Files\\\\PostgreSQL\\\\18\\\\bin\\\\psql.exe\" -h localhost -p 5432 -U mcp_user -d syndrix -c \"\\\\dt\" 2>&1; & \"C:\\\\Program Files\\\\PostgreSQL\\\\18\\\\bin\\\\psql.exe\" -h localhost -p 5432 -U mcp_user -d syndrix -c \"SELECT email, role FROM users;\" 2>&1)",
+      "PowerShell(docker stop syndrix-postgres *)",
+      "PowerShell(Remove-Item *)",
+      "PowerShell(try { $r = Invoke-RestMethod -Uri \"http://localhost:8000/auth/login\" -Method Post -ContentType \"application/json\" -Body '{\"email\":\"admin@syndrix.local\",\"password\":\"changeme\"}' -ErrorAction Stop; \"LOGIN OK - token starts: \" + $r.access_token.Substring\\(0,20\\) + \"...\" } catch { \"LOGIN FAILED: \" + $_.Exception.Message + \" | \" + $_.ErrorDetails.Message })"
     ]
   }
 }

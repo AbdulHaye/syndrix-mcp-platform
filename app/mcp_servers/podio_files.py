@@ -414,6 +414,41 @@ async def get_app_calendar(
 
 
 @files_mcp.tool(
+    name="get_activity_stream",
+    description=(
+        "Recent activity in Podio, NEWEST FIRST — items created/edited, comments added, "
+        "files attached, tasks — across an entire workspace or app. THIS is the correct tool "
+        "for 'what did I create/update/comment on today', 'recent activity', or 'the most "
+        "recently updated item' when NO single app is specified. It spans EVERY app in the "
+        "workspace and includes comment/file activity that a get_items sort by last_edit_on "
+        "misses (adding a comment or file does NOT change an item's last_edit_on). "
+        "Pass space_id to scope to a workspace (preferred), or app_id for one app; omit both "
+        "for the account-wide stream. limit defaults to 30 (max 100). Each event returns type, "
+        "ref_id (the item_id/task_id), title, app, created_on, and created_by."
+    ),
+)
+async def get_activity_stream(
+    space_id: int | None = None,
+    app_id: int | None = None,
+    limit: int = 30,
+    offset: int = 0,
+) -> dict[str, Any]:
+    from app.services.podio_rest import podio_rest
+
+    try:
+        result = await podio_rest.get_activity_stream(
+            space_id=int(space_id) if space_id else None,
+            app_id=int(app_id) if app_id else None,
+            limit=int(limit or 30),
+            offset=int(offset or 0),
+        )
+        return {"success": True, **result}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_activity_stream_failed", space_id=space_id, app_id=app_id, error=str(exc))
+        return {"success": False, "error": str(exc)}
+
+
+@files_mcp.tool(
     name="list_linked_accounts",
     description=(
         "List the user's EXTERNAL calendars/accounts added via Podio's 'Add Calendar' "
@@ -945,13 +980,16 @@ async def update_flow(
         "trigger_type: 'item.create', 'item.update', or 'item.delete'. "
         "name: a human-readable name for the flow. "
         "effects: list of actions. Each effect MUST have 'type' and 'attributes' (an ARRAY of {attribute_id, value} objects). "
+        "The ONLY supported effect types are task.create, comment.create, status.create — Podio's flow API has "
+        "NO 'update a field' effect (an item.update/item.field.* effect is REJECTED with 'Unknown attribute'). "
         "Official attribute_id strings (from Podio docs): "
         "comment.create → attribute_id='comment.value'; "
         "status.create → attribute_id='status.value'; "
-        "task.create → attribute_id='task.text' and optionally 'task.due' (int days), 'task.responsible'; "
-        "item.update → attribute_id='item.field.{external_id}'. "
+        "task.create → attribute_id='task.text' and optionally 'task.due' (int days), 'task.responsible'. "
+        "Do NOT create an item.update/item.field.* effect (it will error) — to auto-set a field value, the user "
+        "must use Podio GlobiFlow manually. "
         "Example comment flow: [{\"type\":\"comment.create\",\"attributes\":[{\"attribute_id\":\"comment.value\",\"value\":\"text\"}]}] "
-        "field_ids (optional, item.update only): list of NUMERIC field IDs from get_app. "
+        "field_ids (optional, for a filtered item.update TRIGGER only): list of NUMERIC field IDs from get_app. "
         "ref_type is always 'app' and is set automatically. Returns new flow_id on success."
     ),
 )
@@ -1131,10 +1169,14 @@ async def remove_task_reference(task_id: int) -> dict[str, Any]:
 @files_mcp.tool(
     name="get_reference_tasks",
     description=(
-        "Retrieve all tasks linked to a specific Podio item or object. "
-        "Pass ref_type (one of: item, app, space, status) and the numeric ref_id. "
-        "Returns a list of tasks in the same shape as get_task: "
-        "task_id, text, description, due_date, completed, assigned_to, and ref details."
+        "Retrieve all tasks scoped to a specific Podio object. THIS is the tool for "
+        "'all tasks in the <X> APP' — pass ref_type='app' and ref_id=<app_id> to get every "
+        "task linked to items in that app (do NOT use get_tasks with space_id for that — "
+        "space_id returns the whole WORKSPACE's tasks across all apps, not one app). "
+        "ref_type is one of: item (tasks on one record), app (tasks across a whole app), "
+        "space (whole workspace), status. ref_id is that object's numeric id. Returns tasks "
+        "in the same shape as get_task (task_id, text, due_date, completed, assigned_to, "
+        "ref_title, ref_app_id, ref_app_name). Returns active/incomplete tasks."
     ),
 )
 async def get_reference_tasks(ref_type: str, ref_id: int) -> dict[str, Any]:
@@ -1145,6 +1187,34 @@ async def get_reference_tasks(ref_type: str, ref_id: int) -> dict[str, Any]:
         return {"success": True, "ref_type": ref_type, "ref_id": ref_id, "tasks": tasks, "count": len(tasks)}
     except Exception as exc:  # noqa: BLE001
         logger.warning("get_reference_tasks_failed", ref_type=ref_type, ref_id=ref_id, error=str(exc))
+        return {"success": False, "error": str(exc)}
+
+
+@files_mcp.tool(
+    name="get_app_tasks",
+    description=(
+        "Get ALL tasks on items in a Podio app — 'all the tasks in the <X> app'. "
+        "This walks the app's items and collects each item's tasks, because Podio has NO "
+        "direct 'tasks in an app' filter (get_reference_tasks(ref_type='app') and "
+        "get_tasks(space_id) do NOT do this — the former returns tasks on the app object "
+        "itself, the latter returns the whole workspace). Pass app_id. completed=false "
+        "(default) for open tasks, true for done. Returns each task with task_id, text, "
+        "due_date, assigned_to, ref_id (item), ref_title, ref_app_name; plus count and "
+        "items_scanned. If items_truncated is true the app had more items than were scanned "
+        "(max_items) — say so rather than implying the list is exhaustive."
+    ),
+)
+async def get_app_tasks(
+    app_id: int, completed: bool = False, max_items: int = 300
+) -> dict[str, Any]:
+    from app.services.podio_rest import podio_rest
+
+    try:
+        return await podio_rest.get_app_tasks(
+            int(app_id), completed=bool(completed), max_items=int(max_items)
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_app_tasks_failed", app_id=app_id, error=str(exc))
         return {"success": False, "error": str(exc)}
 
 

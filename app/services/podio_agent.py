@@ -43,10 +43,14 @@ _OLLAMA_TOOL_PRIORITY: dict[str, set[str]] = {
     "automation":  {"get_app_flows", "get_flow", "create_flow"},
     "webhook":     {"list_webhooks", "create_webhook", "delete_webhook",
                     "request_webhook_verification", "validate_webhook_verification"},
-    "task":        {"get_tasks", "create_task", "update_task", "complete_task",
+    "task":        {"get_tasks", "get_app_tasks", "create_task", "update_task", "complete_task",
                     "delete_task", "reassign_task", "uncomplete_task", "get_reference_tasks"},
     "calendar":    {"get_calendar", "get_space_calendar", "get_app_calendar",
                     "list_linked_accounts", "get_linked_account_calendar"},
+    "recent":      {"get_activity_stream", "get_apps_in_space", "get_items"},
+    "today":       {"get_activity_stream", "get_apps_in_space", "get_items"},
+    "activity":    {"get_activity_stream"},
+    "latest":      {"get_activity_stream", "get_items"},
     "reminder":    {"get_reminder", "set_reminder", "delete_reminder"},
     "recurrence":  {"get_recurrence", "set_recurrence", "delete_recurrence"},
     "conversation":{"list_conversations", "get_conversation",
@@ -148,7 +152,8 @@ _FILES_READ_ONLY = {
     # Item history / graph
     "get_item_revisions", "get_item_references", "get_items_by_view",
     # Task reads
-    "get_reference_tasks", "get_task_labels", "get_task_summary", "get_task_count",
+    "get_reference_tasks", "get_app_tasks",
+    "get_task_labels", "get_task_summary", "get_task_count",
     # Flow reads
     "get_app_flows", "get_flow", "get_flow_context",
     "get_flow_effect_attributes", "get_flow_possible_attributes",
@@ -159,11 +164,25 @@ _FILES_READ_ONLY = {
     # Calendar (native + externally added / linked-account calendars)
     "get_calendar", "get_space_calendar", "get_app_calendar",
     "list_linked_accounts", "get_linked_account_calendar",
+    # Recent activity across the whole workspace (items/comments/files, newest first)
+    "get_activity_stream",
     # Reminder / recurrence reads
     "get_reminder", "get_recurrence",
     # Non-destructive operations
-    "export_app_xlsx", "clone_item",
+    "export_app_xlsx",
+    # NOTE: clone_item is intentionally NOT here. Cloning creates a new record and
+    # must only be exposed on explicit clone/duplicate intent (see _wants_clone) —
+    # otherwise the model reaches for it as a workaround when create_item fails.
 }
+
+# Explicit clone/duplicate intent — clone_item is only exposed when the user
+# actually asks to clone/copy a record, never as a create_item fallback.
+_CLONE_WORDS = ("clone", "duplicate", "make a copy", "copy of", "copy the")
+
+
+def _wants_clone(message: str) -> bool:
+    m = (message or "").lower()
+    return any(w in m for w in _CLONE_WORDS)
 
 
 # Tools whose schemas include 'space_id' but Podio's API REJECTS it at runtime.
@@ -176,13 +195,25 @@ _SPACE_ID_BLOCKED = {
 _SPACE_PARAM_TOOLS = {"get_tasks", "get_task_summary", "get_task_count"}
 
 
+_REPEAT_RUN_RE = re.compile(r"([^\w\s])\1{14,}")  # e.g. ".............." "----------------"
+
+
 def _is_garbage_reply(text: str) -> bool:
-    """True when the model emits bracket/pipe noise instead of a real reply."""
+    """True when the model emits noise instead of a real reply: bracket/pipe soup,
+    or a degenerate run of a repeated punctuation char (e.g. a long row of dots or
+    dashes the model spews when its generation collapses)."""
     s = (text or "").strip()
     if not s or len(s) < 15:
         return False
+    # A long run of the same punctuation char (........  --------  ~~~~~~~~) is garbage.
+    if _REPEAT_RUN_RE.search(s):
+        return True
     noise = sum(1 for c in s if c in "{}[]|\\/ \n\t")
-    return noise / len(s) > 0.65
+    if noise / len(s) > 0.65:
+        return True
+    # Any single non-alphanumeric char dominating the reply (e.g. dots) is garbage.
+    punct = sum(1 for c in s if not c.isalnum() and not c.isspace())
+    return punct / len(s) > 0.6
 
 
 _HALLUCINATED_SUCCESS_PHRASES = (
@@ -198,6 +229,11 @@ _HALLUCINATED_SUCCESS_PHRASES = (
     "added to the item", "linked to the item", "have been added",
     "have been created", "comment has been", "task has been created",
     "review added", "assigned to you",
+    # file attach / image — the model claimed an attach/set that never ran or errored
+    "attached successfully", "successfully attached", "has been attached",
+    "have been attached", "attached the file", "attached to the item",
+    "file attached", "file has been", "image set", "image has been set",
+    "set as the item", "successfully uploaded", "upload successful",
 )
 
 _WRITE_TOOL_NAMES = {
@@ -211,8 +247,10 @@ _WRITE_TOOL_NAMES = {
 
 
 _TEMPLATE_VAR_RE = re.compile(r"\{[a-z_]{2,}\}")  # e.g. {item_id}, {task_id}, {item_title}
-# Matches tool calls written as plain text: get_items":{ or get_items({ or get_items: {
-_TEXT_TOOL_CALL_RE = re.compile(r'\b[a-z][a-z0-9_]+["\']?\s*[:(]\s*\{')
+# Matches tool calls written as plain text: get_items":{ / get_items({ / get_items: {
+# and the GLUED, separator-less form get_items{"app_id":...} — the '{' immediately
+# followed by a quoted JSON key is the strong signal (avoids matching prose braces).
+_TEXT_TOOL_CALL_RE = re.compile(r'\b[a-z][a-z0-9_]{2,}["\']?\s*[:(]?\s*\{\s*["\']')
 
 
 def _has_template_vars(text: str) -> bool:
@@ -236,19 +274,237 @@ def _has_non_ascii_garbage(text: str) -> bool:
     return non_ascii / len(s) > 0.1  # >10% non-ASCII is almost certainly garbage
 
 
+def _step_errored(step: dict) -> bool:
+    """True when a recorded tool step did NOT succeed. Covers every failure shape
+    the tool layers produce: hosted-MCP {"isError": True}, our REST wrappers'
+    {"success": False} / {"error": ...}, and raised exceptions captured as
+    {"isError": True, "content": "..."}."""
+    res = step.get("result")
+    if not isinstance(res, dict):
+        return False
+    if res.get("isError") or res.get("error") is not None or res.get("success") is False:
+        return True
+    return False
+
+
+def _successful_write_tools(steps: list[dict]) -> list[str]:
+    """Names of write tools that actually SUCCEEDED this turn."""
+    return [
+        s.get("tool")
+        for s in steps
+        if s.get("tool") in _WRITE_TOOL_NAMES and not _step_errored(s)
+    ]
+
+
 def _is_hallucinated_write(text: str, steps: list[dict]) -> bool:
-    """True when the model claims a write succeeded but called no write tool."""
+    """True when the reply claims a write/attach/set/delete SUCCEEDED but no write
+    tool completed successfully this turn — i.e. none was called, or every one that
+    was called returned an error. A write tool that ERRORED does NOT count as done:
+    the model must report the failure, never claim success on a failed call."""
     t = (text or "").lower()
     claims_success = any(p in t for p in _HALLUCINATED_SUCCESS_PHRASES)
     if not claims_success:
         return False
-    used_write_tools = any(s.get("tool") in _WRITE_TOOL_NAMES for s in steps)
-    return not used_write_tools
+    return not _successful_write_tools(steps)
 
 
 def _wants_write(message: str) -> bool:
     m = (message or "").lower()
     return any(w in m for w in _WRITE_WORDS)
+
+
+# ── get_app field-schema compaction ────────────────────────────────────────────
+# Podio's hosted get_app returns a large, deeply-nested app object. For a 16-field
+# app the raw payload easily exceeds _MAX_TOOL_OUTPUT_CHARS and gets truncated,
+# leaving the model without the external_ids / types / required flags it needs to
+# build a valid create_item payload (root cause of "No field found" on guessed
+# external_ids and "must be Range" on an omitted required date field). We replace
+# the get_app result the model sees with a compact, COMPLETE field schema.
+
+def _find_app_fields(data: Any) -> list[dict[str, Any]]:
+    """Locate the Podio app ``fields`` list anywhere in a get_app result, regardless
+    of nesting (root, under 'app', inside structuredContent, etc.)."""
+    def _is_field_list(x: Any) -> bool:
+        return isinstance(x, list) and any(
+            isinstance(e, dict) and "external_id" in e and "type" in e for e in x
+        )
+
+    if isinstance(data, dict):
+        if _is_field_list(data.get("fields")):
+            return [e for e in data["fields"] if isinstance(e, dict)]
+        for v in data.values():
+            found = _find_app_fields(v)
+            if found:
+                return found
+    elif isinstance(data, list):
+        if _is_field_list(data):
+            return [e for e in data if isinstance(e, dict)]
+        for v in data:
+            found = _find_app_fields(v)
+            if found:
+                return found
+    return []
+
+
+def _compact_field(f: dict[str, Any]) -> dict[str, Any]:
+    cfg = f.get("config") or {}
+    settings = cfg.get("settings") or {}
+    out: dict[str, Any] = {
+        "external_id": f.get("external_id"),
+        "field_id": f.get("field_id"),
+        "type": f.get("type"),
+        "label": f.get("label") or cfg.get("label"),
+        "required": bool(cfg.get("required")),
+    }
+    opts = settings.get("options")
+    if isinstance(opts, list):
+        out["options"] = [
+            {"id": o.get("id"), "text": o.get("text")}
+            for o in opts
+            if isinstance(o, dict) and o.get("status") != "deleted"
+        ]
+    return out
+
+
+# Per-type input hint shown to the USER in the create/update form.
+_FIELD_TYPE_HINT: dict[str, str] = {
+    "text": "text",
+    "number": "number",
+    "money": "amount + currency, e.g. 999.99 USD",
+    "date": "date (YYYY-MM-DD), optionally with a time",
+    "duration": "duration",
+    "phone": "phone number",
+    "email": "email address",
+    "contact": "person — give a name (I'll match it)",
+    "member": "person — give a name (I'll match it)",
+    "app": "linked record — give the record's name (I'll match it)",
+    "location": "address",
+    "embed": "link / URL",
+    "image": "file — upload it first, then give me the file",
+    "file": "file — upload it first, then give me the file",
+    "progress": "percentage 0–100",
+    "calculation": "(auto-calculated — you don't fill this)",
+}
+
+
+def _render_app_form(app_name: str, compact_fields: list[dict[str, Any]]) -> str:
+    """Build a ready-to-display Markdown form the model can show verbatim: every
+    fillable field grouped required/optional, with each dropdown's selectable
+    option values spelled out so the user can pick."""
+    def _line(f: dict[str, Any]) -> str:
+        label = f.get("label") or f.get("external_id") or "(unnamed)"
+        ftype = f.get("type") or ""
+        opts = f.get("options")
+        if isinstance(opts, list) and opts:
+            choices = ", ".join(str(o.get("text")) for o in opts if o.get("text"))
+            return f"- **{label}** (choose one): {choices}"
+        hint = _FIELD_TYPE_HINT.get(ftype, ftype or "value")
+        return f"- **{label}** — {hint}"
+
+    # calculation fields are auto-computed; never ask the user to fill them.
+    fillable = [f for f in compact_fields if f.get("type") != "calculation"]
+    required = [f for f in fillable if f.get("required")]
+    optional = [f for f in fillable if not f.get("required")]
+
+    lines: list[str] = [f"Here are the fields for **{app_name or 'this app'}**. "
+                        "Give me values for the ones you want to set:", ""]
+    if required:
+        lines.append("**Required:**")
+        lines += [_line(f) for f in required]
+        lines.append("")
+    if optional:
+        lines.append("**Optional:**")
+        lines += [_line(f) for f in optional]
+    return "\n".join(lines).strip()
+
+
+def _summarise_get_app_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Return a compact get_app result exposing every field's external_id, field_id,
+    type, required flag and (for category/status) options — so the schema the model
+    needs to build create_item is always present and never truncated. Also includes
+    a ready-to-display ``form`` (all fields + dropdown option values) the model shows
+    the user before creating. Leaves the result unchanged if no field list is found."""
+    if not isinstance(result, dict):
+        return result
+    src = result.get("data") if result.get("data") is not None else result
+    fields = _find_app_fields(src)
+    if not fields:
+        return result
+
+    app_meta: dict[str, Any] = {}
+    def _scan_meta(node: Any) -> None:
+        if app_meta or not isinstance(node, dict):
+            return
+        keys = ("app_id", "name", "item_name", "space_id", "url_label")
+        picked = {k: node.get(k) for k in keys if node.get(k) is not None}
+        if picked.get("app_id") is not None:
+            app_meta.update(picked)
+            return
+        for v in node.values():
+            _scan_meta(v)
+    _scan_meta(src)
+
+    compact = [_compact_field(f) for f in fields]
+    return {
+        "isError": False,
+        "app": app_meta,
+        "field_count": len(fields),
+        "fields": compact,
+        "form": _render_app_form(app_meta.get("name") or "", compact),
+        "note": (
+            "This is the app's field schema. USE IT FOR THE CURRENT TASK — do not assume "
+            "an item is being created. If the user is CREATING/EDITING a record: show the "
+            "'form' text VERBATIM (all fields + dropdown option values) and wait for their "
+            "values (unless every required field was already given); the create_item/update_item "
+            "'fields' keys MUST be these exact external_id strings; value formats: text=string; "
+            "number=number; money={\"value\":N,\"currency\":\"USD\"}; date={\"start\":\"YYYY-MM-DD "
+            "HH:MM:SS\"}; category/status=the option id whose text was picked; relationship/app="
+            "item_id integer; contact=profile_id integer. If the user is building a FLOW/automation: "
+            "use this list to show which fields they can trigger on or update (use 'field_id' as the "
+            "numeric field_ids for a specific-field trigger, and 'external_id' in "
+            "item.field.{external_id} effects) — do NOT call create_item."
+        ),
+    }
+
+
+# ── "Fetched the fields but didn't show them" guard ─────────────────────────────
+# After get_app the model sometimes says "I fetched the fields, tell me which one"
+# without actually LISTING any field. We detect that and append the real list so the
+# user always sees the options.
+_CLAIMS_FIELDS_PHRASES = (
+    "fetched the", "fetched all", "list of fields", "the fields", "which field",
+    "choose which", "fields from the", "fields in your", "fields in the",
+    "waiting for you to tell me which", "let me know which field",
+    "so you can choose", "pick which", "select which", "which of the following fields",
+)
+
+
+def _claims_to_present_fields(text: str) -> bool:
+    t = (text or "").lower()
+    return any(p in t for p in _CLAIMS_FIELDS_PHRASES)
+
+
+def _count_field_labels_shown(text: str, labels: list[str]) -> int:
+    t = (text or "").lower()
+    return sum(1 for lbl in labels if lbl and str(lbl).lower() in t)
+
+
+def _render_field_list(app_name: str, fields: list[dict[str, Any]]) -> str:
+    """A neutral, display-ready field list (works for both 'which field to trigger on'
+    and 'here are the fields'). Dropdowns show their selectable option values."""
+    lines: list[str] = [f"Fields in **{app_name or 'this app'}** you can choose from:"]
+    for f in fields:
+        if f.get("type") == "calculation":
+            continue
+        label = f.get("label") or f.get("external_id") or "(unnamed)"
+        ftype = f.get("type") or ""
+        opts = f.get("options")
+        if isinstance(opts, list) and opts:
+            choices = ", ".join(str(o.get("text")) for o in opts if o.get("text"))
+            lines.append(f"- **{label}** ({ftype}): {choices}")
+        else:
+            lines.append(f"- **{label}** ({ftype})")
+    return "\n".join(lines)
 
 
 # User-authored operating prompt, adapted to the real Podio MCP tool names
@@ -270,7 +526,9 @@ CORE RULES
 - If a tool fails, retry once with corrected parameters before reporting failure.
 - NEVER write function calls like tool_name({args}) in plain text. Only use structured tool calls.
 - NEVER output JSON or code blocks in plain text. Summarise tool results in clear prose.
-- CRITICAL: NEVER say "successfully updated / created / deleted / completed / added / linked" unless you have already called the relevant tool AND received a success result. If you have not yet called the tool, call it now — do not reply with prose first.
+- CRITICAL: NEVER say "successfully updated / created / deleted / completed / added / linked / attached / set / uploaded" unless you have already called the relevant tool for THAT exact action AND its result confirms success. If you have not yet called the tool, call it now — do not reply with prose first.
+- CRITICAL — ACTUALLY SHOW WHAT YOU FETCH: When you fetch a list to help the user choose (app fields, dropdown options, items, tasks, members), you MUST print that list in your reply. NEVER say "I fetched the fields / I have the list / choose which one" without actually listing them right there. A promise to show is not showing.
+- CRITICAL — CHECK EVERY TOOL RESULT: After each tool call, read its result before saying anything. A result containing "isError", "error", "success": false, "no field", "not allowed", "must be", "404"/"400"/"403"/"500", or any HTTP error means the action FAILED. On failure: fix and retry once if you can, otherwise tell the user plainly it FAILED and why. A failed call is NOT "done" — never report a failed or never-attempted action as successful. Never claim a record/file "already exists" or is "already attached" from memory: verify with a read tool (e.g. get_item_files) first.
 - CRITICAL: When a request has multiple steps (e.g. read → comment → create task), you MUST call ALL the tools in sequence before writing any summary. Never stop after the reads and pretend the writes happened.
 - PARTIAL EXECUTION: Steps in a multi-step request are INDEPENDENT unless one truly needs another's output. If ONE step is blocked or impossible (e.g. a reminder on an item whose app has no date field), DO NOT abandon the whole request and DO NOT stop to ask a question — carry out every OTHER step you can (e.g. still add the comment, still clone), then finish with a per-step status report: each step marked ✓ done (with the result/ID) or ✗ blocked (with a one-line reason and, if useful, a suggested alternative).
 - Only pause to ask the user when a REQUIRED input is genuinely missing AND cannot be looked up by a tool or safely defaulted (e.g. defaulting task assignee to the current user). Do NOT ask "Would you like me to proceed?" for non-destructive steps you were already told to do.
@@ -278,6 +536,7 @@ CORE RULES
 - NEVER output template placeholders like {item_id}, {task_id}, {item_title} — these are never valid in a reply. Always substitute real values from tool results.
 - NEVER fabricate IDs (task_id, user_id, item_id). Only use IDs that appear in actual tool results.
 - CRITICAL: When the user provides a numeric ID (flow_id, item_id, task_id, app_id, etc.), copy it EXACTLY digit-for-digit into the tool call. Never transpose, round, or alter any digit. If unsure, repeat the ID back before calling the tool.
+- CRITICAL: NEVER use clone_item (or any duplicate/copy operation) as a workaround for a failed create_item. Cloning is a DIFFERENT action and is only permitted when the user explicitly asked to clone/duplicate/copy a record. If create_item fails, re-read the exact error, fix the specific field it names, retry once, and if it still fails report the exact error plus the remaining required fields from get_app — do NOT clone, and do NOT invent any other substitute.
 
 ---
 
@@ -292,11 +551,13 @@ TOOL SELECTION
 | Find org_id                                      | get_organizations                                                       |
 | Workspace / org members                          | get_space_members / get_org_members                                     |
 | Search across entire account                     | search_globally                                                         |
+| Recently created/updated item(s), "what changed / what did I do today", most-recent record across a WHOLE workspace | get_activity_stream(space_id=<space_id>) |
 | List files attached to a record                  | get_item_files                                                          |
 | Read / download an attached file                 | download_file                                                           |
 | Recent activity / notifications                  | get_notifications                                                       |
-| List incomplete tasks                            | get_tasks(space_id=<space_id>, completed=false) — space_id required     |
+| List incomplete tasks in the WHOLE workspace     | get_tasks(space_id=<space_id>, completed=false) — space_id required     |
 | List completed tasks                             | get_tasks(completed=true) — do NOT pass space_id for completed tasks    |
+| All tasks in a specific APP ("tasks in the X app") | get_app_tasks(app_id=<app_id>) — walks the app's items & collects their tasks. NOT get_tasks(space_id) (whole workspace) and NOT get_reference_tasks(ref_type="app") (returns 0 — the app object has no tasks) |
 | Create a task                                    | create_task                                                             |
 | Update task text / due date / label              | update_task(task_id, text=, due_on=, label_id=)                        |
 | Complete a task                                  | complete_task                                                           |
@@ -305,7 +566,7 @@ TOOL SELECTION
 | Mark a completed task back as incomplete         | uncomplete_task                                                         |
 | Remove a task's link to a record                 | remove_task_reference                                                   |
 | Change task priority order                       | rank_task                                                               |
-| All tasks linked to a specific record            | get_reference_tasks                                                     |
+| All tasks linked to a specific record (one item) | get_reference_tasks(ref_type="item", ref_id=<item_id>)                  |
 | Task label operations                            | get_task_labels / create_task_label / update_task_label / delete_task_label |
 | Task counts / aggregated stats                   | get_task_summary / get_task_count                                       |
 | List / inspect automations on an app             | get_app_flows / get_flow                                                |
@@ -357,16 +618,31 @@ PAGINATION — Never miss records
 
 ---
 
+RECENT ACTIVITY / "WHAT CHANGED TODAY" / "THE RECENTLY UPDATED ITEM"
+When the user refers to recent activity, "the recently updated/created item", "what I created/updated/commented today", "the latest item", or "the most recent record" WITHOUT naming a single app:
+1. Call get_activity_stream(space_id=<active space_id>). It returns events NEWEST FIRST across EVERY app in the workspace, and includes comments and file attachments — which do NOT change an item's last_edit_on and are therefore INVISIBLE to a get_items sort. NEVER answer these questions by picking the top of one arbitrary app's get_items — that is what returns a stale item and attaches files to the wrong record.
+2. To find items from TODAY, use the CURRENT DATE header and read the events whose created_on/last_edit_on is today. The stream is already time-ordered; do not assume "no items today" just because one app's get_items looked old.
+3. If get_activity_stream is unavailable/errors, FALL BACK: call get_apps_in_space(space_id), then get_items(app_id, sort_by="last_edit_on", sort_desc=true, limit=5) for each app, and compare created_on/last_edit_on across all apps — do not stop at the first app.
+4. Before performing a WRITE (attach a file, add a comment, update) on an item you identified as "the recent one", state which item you mean (name + item_id) and, if there is ANY ambiguity, confirm with the user first. Attaching to the wrong record is hard to undo.
+⚠️ Adding a comment or attaching a file does NOT bump last_edit_on. If the user says they commented today but an item shows an old last_edit_on, that is expected — trust the activity stream, not last_edit_on.
+---
 ITEM CREATE / UPDATE WORKFLOW
 ⚠️ This section is ONLY for create_item / update_item (creating or editing a Podio RECORD).
    For creating an automation/flow, see FLOW (AUTOMATION) WORKFLOW below.
    "Workflow" / "automation" / "flow" → FLOW WORKFLOW, NOT this section.
 1. Identify app_id in the active workspace (use known IDs only if space_id=7532914, else call get_apps_in_space).
-2. Call get_app(app_id) to read all field definitions — external_ids, types, options, required/optional.
-3. Present the full field list to the user — mark each (required) or (optional), list valid options for category/status/relationship fields. Wait for their input.
-4. Build the fields object using exact external_ids from get_app. Include every field the user provided; omit fields the user left blank.
+2. Call get_app(app_id). The result contains a ready-made 'form' string plus a 'fields' schema (external_id, type, required, and dropdown options).
+3. ALWAYS show the user the 'form' string FIRST — display it verbatim so they see EVERY field and, for each dropdown (category/status) field, the exact option values they can choose. Then WAIT for the user to provide values.
+   - The ONLY time you may skip the form and create immediately is when the user already gave a value for every required=true field in their request. If ANY required field is still unspecified, or the user gave no field values at all, you MUST show the form and wait — do NOT invent values, do NOT default a dropdown to a guessed option, do NOT proceed to create_item.
+4. Once the user replies with values, build the fields object using exact external_ids from get_app. Include every field the user provided PLUS every field marked required=true. Omit optional fields the user left blank.
+   - Keys MUST be the literal external_id strings from get_app — never guess a key like "sku" that is not in the schema (Podio returns "No field found").
+   - money field value → {"value": 999.99, "currency": "USD"}.
+   - date field value → {"start": "YYYY-MM-DD HH:MM:SS"} (an object with "start"; add "end" only for ranges). A bare string or an omitted required date causes Podio error 'must be Range'.
+   - category/status value → the numeric option id from that field's options list.
+   - relationship/app value → the referenced item_id integer; contact value → profile_id integer.
 5. Call create_item / update_item.
-6. Confirm success and show the new item_id.
+6. If it FAILS: read the error, correct the exact field/format it names, retry ONCE. If it still fails, report the exact error and the required fields still needed. NEVER fall back to clone_item or fabricate a record.
+7. On success, confirm and show the new item_id.
 
 ---
 
@@ -404,7 +680,8 @@ Triggered by: "delete this contact / agent / record / item"
 !! Never delete without explicit user confirmation.
 ---
 TASK MANAGEMENT WORKFLOW
-- list incomplete tasks: call get_tasks(space_id=<space_id>, completed=false, limit=50). Always pass space_id for incomplete tasks.
+- list incomplete tasks in the WHOLE WORKSPACE: call get_tasks(space_id=<space_id>, completed=false, limit=50). Always pass space_id for incomplete tasks.
+- tasks in a SPECIFIC APP ("all the tasks in the Products app"): resolve the app_id first (get_apps_in_space if not known), then call get_app_tasks(app_id=<app_id>). It walks the app's items and returns every task on them. DO NOT use get_tasks(space_id=...) (that is the whole workspace across all apps) and DO NOT use get_reference_tasks(ref_type="app") (Podio returns 0 — tasks live on the app's ITEMS, not on the app object). If the result has items_truncated=true, tell the user the app had more items than were scanned — do not imply the list is complete.
 - list completed tasks: call get_tasks(completed=true, limit=50). Do NOT pass space_id — Podio ignores the space filter for completed tasks and will return nothing.
 - create task: call create_task(text, due_on="YYYY-MM-DD HH:MM:SS"). due_on MUST use "YYYY-MM-DD HH:MM:SS" — NOT "YYYY-MM-DD" alone and NOT ISO 8601 "YYYY-MM-DDThh:mm:ssZ". Example: "2024-07-16 12:00:00".
 - update task (text/due/label): call update_task(task_id, text=..., due_on=..., label_id=...). Provide at least one field.
@@ -419,49 +696,72 @@ TASK MANAGEMENT WORKFLOW
 - reminder on task/item: Podio reminders are RELATIVE (minutes before the object's due date). Prefer set_reminder(ref_type, ref_id, remind_delta=<minutes before due>, e.g. 1440=1 day, 60=1 hour). You MAY pass remind_at="YYYY-MM-DD HH:MM:SS" instead — it is converted using the object's due date, which must already exist and be after the reminder time. get_reminder / delete_reminder to read/remove.
 ---
 FLOW (AUTOMATION) WORKFLOW
-⚠️ "Create a workflow / automation / flow" means create_flow, NOT create_item.
-   Do NOT call get_app for field definitions when creating a flow.
+⚠️ "Create a workflow / automation / flow" means create_flow, NOT create_item. This is
+   NOT the item-create form. But you DO use get_app here — to SHOW the user which fields
+   they can trigger on / update, and to get a field's numeric field_id.
 
-STEP 1 — GATHER ALL INFORMATION FROM THE USER FIRST (ask, wait for answers, then call tools).
+ASK ONE QUESTION AT A TIME, in this order. After each answer, move to the next step —
+never dump all questions at once, and never proceed until the current step is answered.
+Briefly explain each choice so the user knows what it does (be a guide, not a form).
 
-  A. TRIGGER — ask: "When should this run?"
-       1. When a new record is created  (item.create)
-       2. When an existing record is updated  (item.update)
-       3. When a record is deleted  (item.delete)
-     If item.update: ALSO ask: "Should it fire on ANY field update, or only when a
-       SPECIFIC field changes? (e.g. only when Status changes, only when Agent is set)"
-     If a specific field: you will need its NUMERIC field_id — get it from get_app by
-       finding the field where external_id matches and reading its field_id integer.
+STEP 1 — TRIGGER. Ask: "When should this automation run?" and list ONLY these:
+   1. When a new record is created  (item.create)
+   2. When an existing record is updated  (item.update)
+   3. When a record is deleted  (item.delete)
+   Wait for the answer.
+   • If they chose UPDATED (item.update), ask next: "Should it run on ANY field change,
+     or only when a SPECIFIC field changes?"
+     - If they want a specific field (or ask "what fields can I choose / trigger on"),
+       CALL get_app(app_id) and PRESENT the field list from its 'form'/'fields' (field
+       name + type; for dropdowns list the option values). Let them pick one or more.
+       Remember each chosen field's NUMERIC field_id (from the schema) for field_ids later.
+     - If ANY field, no get_app needed for the trigger.
 
-  B. ACTION — ask: "What should the automation do?" — present options:
-       1. Create a task  (task.create)
-       2. Add a comment  (comment.create)
-       3. Update a field on the record  (item.update)
-       4. Post a status update  (status.create)
-     Then ask the DETAIL question for the chosen action:
-       - Create a task  → "Task description? Who should be assigned? Due in how many days?"
-       - Add a comment  → "What should the comment text say?"
-       - Update a field → "Which field and what value?"
-       - Status update  → "What status text?"
-     ⚠️ DO NOT suggest {{item.field_name}} style variables — they are NOT valid in the
-        REST API. Dynamic expressions are specific attribute IDs you must look up via
-        get_flow_possible_attributes AFTER getting the user's intent.
+STEP 2 — ACTION. Ask: "What should the automation do?" and list ONLY these three (the only
+   effects Podio's flow API supports):
+   1. Create a task        (task.create)
+   2. Add a comment        (comment.create)
+   3. Post a status update  (status.create)
+   Wait, then ask the DETAIL question for the chosen action:
+   - Create a task   → "What should the task say? Who is it assigned to? Due in how many days?"
+   - Add a comment   → "What should the comment text say?"
+   - Status update   → "What should the status text say?"
+   ⚠️ DO NOT suggest {{item.field_name}} style variables — they are NOT valid in the REST API.
 
-  C. FLOW NAME — suggest a descriptive name and confirm with the user.
-     (e.g. "New Lead - Create Follow-up Task", "Lead Updated - Notify Agent")
+⚠️ WHAT THIS FLOW API CAN AND CANNOT DO — be honest about this UP FRONT, before asking for details:
+   CAN (the ONLY supported effects): create a task, add a comment, post a status update.
+   CANNOT (NOT supported by Podio's flow API — these need Podio's advanced automation
+   "GlobiFlow / Workflow Automation", configured manually in Podio, which this tool cannot access):
+     • Updating / setting ANY field value — even to a fixed value. Podio rejects a field effect with
+       "Unknown attribute item.field.X". There is NO working way to set a field via this API.
+     • Arithmetic or RELATIVE field changes — "decrease Progress by 10", "increase X by N", add/subtract.
+     • CONDITIONAL logic — "if Progress ≤ 10 set to 0", "only when …", if/then branches.
+     • Copying/deriving a value from another field or the trigger, or any computed value.
+     • Sending email/SMS, calling webhooks as an effect, or multi-step branching.
+   If the user asks for any CANNOT item (e.g. "set/decrease Progress"), DO NOT pretend to build it, DO NOT
+   call create_flow with an item.update / item.field.* effect (it will fail), and DO NOT invent a
+   "field_id is missing" excuse. Tell them plainly it is not possible via the flow API, explain it needs
+   GlobiFlow set up manually in Podio, and offer a supported alternative (create a task, add a comment,
+   or post a status — e.g. a task "Review Progress after Category change"). Wait for them to pick one.
 
-STEP 2 — Only AFTER collecting A, B, and C call tools:
+STEP 3 — NAME. Suggest a descriptive name and confirm (e.g. "Product Updated - Create Review Task").
+   (You may ask for the name first instead, if the user prefers — but always confirm it.)
+
+STEP 4 — Only AFTER trigger, action, and name are settled, call tools:
 1. Call get_app_flows(app_id) — check for duplicates.
-2. If item.update + specific field filtering: call get_app(app_id) and find the field's
-   NUMERIC field_id integer (not its external_id string). Pass it as field_ids=[field_id]
-   to create_flow so only that field change fires the trigger.
+2. If item.update + specific field(s): pass field_ids=[<numeric field_id>, ...] to create_flow
+   (the numeric field_id from get_app, NOT the external_id string) so only those field changes fire.
+   Every field in the get_app schema HAS a "field_id" — read it there. Do NOT claim "field_id is
+   missing"; if get_app returned no fields at all, that is a schema-fetch problem to report, not a
+   reason to refuse a supported automation.
 3. Build the effects list. Podio requires attributes as an array of {attribute_id, value} objects.
    Official attribute_id strings (from developers.podio.com/doc/flows):
    - comment.create:      [{"type": "comment.create", "attributes": [{"attribute_id": "comment.value", "value": "<comment text>"}]}]
    - status.create:       [{"type": "status.create", "attributes": [{"attribute_id": "status.value", "value": "<status text>"}]}]
    - task.create:         [{"type": "task.create", "attributes": [{"attribute_id": "task.text", "value": "<description>"}, {"attribute_id": "task.due", "value": 0}]}]
    - conversation.create: attributes use "conversation.subject", "conversation.text", "conversation.participant"
-   - item.update field:   attribute_id = "item.field.{external_id}" e.g. "item.field.status"
+   ⚠️ There is NO supported "update a field" effect — do NOT build an effect of type item.update or an
+      attribute_id like "item.field.X"; Podio rejects it ("Unknown attribute"). Use only task/comment/status.
    Do NOT call get_flow_effect_attributes — endpoint unavailable.
    Do NOT invent {{item.field_name}} variables — they are not valid.
 4. Present the final config summary to the user and wait for explicit confirmation.
@@ -596,6 +896,60 @@ def _recover_tool_name(raw_name: str, valid_names: set[str]) -> tuple[str, dict 
             return cand, inline_args
 
     return name, inline_args
+
+
+def _extract_balanced_json(text: str, start: int) -> str | None:
+    """Return text[start:] up to and including the '}' that balances text[start]=='{',
+    respecting strings/escapes. None if unbalanced."""
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        else:
+            if c == '"':
+                in_str = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+    return None
+
+
+def _extract_text_tool_calls(text: str, valid_names: set[str]) -> list[dict[str, Any]]:
+    """Recover tool calls a (weak) model wrote as plain TEXT instead of using the
+    structured function-calling format — e.g. `get_app{"app_id":123}`,
+    `create_flow({...})`, or a garbled `get_appXYZ{"app_id":123}`. The tool name is
+    normalised via _recover_tool_name (handles glued/unicode noise). Only calls that
+    resolve to a real tool with a valid JSON-object argument are returned."""
+    if not text or "{" not in text:
+        return []
+    calls: list[dict[str, Any]] = []
+    for m in re.finditer(r"([A-Za-z_][A-Za-z0-9_]{1,60})\s*[:(]?\s*\{", text):
+        name_tok = m.group(1)
+        brace_start = m.end() - 1  # position of '{'
+        obj = _extract_balanced_json(text, brace_start)
+        if not obj:
+            continue
+        try:
+            args = json.loads(obj)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(args, dict):
+            continue
+        name, _ = _recover_tool_name(name_tok, valid_names)
+        if name in valid_names:
+            calls.append({"name": name, "args": args})
+    return calls
 
 
 def _collect_ids(obj: Any, key_names: set[str], out: set[int]) -> None:
@@ -768,6 +1122,9 @@ async def run_podio_agent(
             "export", "clone", "duplicate",
             "webhook", "flow", "workflow", "automation",
             "reference", "label", "task",
+            # recent-activity / "what changed today" intents → get_activity_stream
+            "recent", "recently", "latest", "today", "activity", "stream",
+            "last updated", "last edited", "just created", "did i", "this week",
         )
     )
     try:
@@ -776,6 +1133,10 @@ async def run_podio_agent(
             # If no write intent, expose only the read-only / non-destructive tool subset.
             if not wants_write:
                 files_specs = [s for s in files_specs if s["function"]["name"] in _FILES_READ_ONLY]
+            # clone_item creates a record — only expose it on explicit clone/duplicate
+            # intent, never as a fallback the model can pick when create_item fails.
+            if not _wants_clone(recent_text):
+                files_specs = [s for s in files_specs if s["function"]["name"] != "clone_item"]
             files_tool_names = {s["function"]["name"] for s in files_specs}
             # Deduplicate: drop hosted MCP tools that we override via REST
             tool_specs = [
@@ -831,8 +1192,16 @@ async def run_podio_agent(
             "- otherwise (attach/add a document/file to the record) call "
             "attach_file_to_item(file_id=<given>, item_id=<resolved>).\n"
             "NEVER invent a file_id or item_id — use the file_id from the conversation and a real "
-            "item_id you looked up. If set_item_image reports the app has no image field, tell the "
-            "user that and offer to attach it as a file instead."
+            "item_id you looked up.\n"
+            "- Check the result of the attach/image tool. Only say the file was attached/set when the "
+            "tool returned success. If it returned an error, the file was NOT added — do not say it was.\n"
+            "- If set_item_image fails because the app has no image field, that means the IMAGE was not "
+            "set. If the user wants the file on the record, you MUST then call "
+            "attach_file_to_item(file_id, item_id) AND confirm its success result before telling the "
+            "user it was attached. Do not describe the file as attached until attach_file_to_item "
+            "actually succeeds.\n"
+            "- 'add it to the files' / 'attach it' → call attach_file_to_item and verify the result. "
+            "Never claim it is 'already attached' without first calling get_item_files to confirm."
         )
 
     # Map each tool to its parameter schema so we can sanitize args + auto-fill the workspace.
@@ -851,6 +1220,10 @@ async def run_podio_agent(
 
     steps: list[dict[str, Any]] = []
     final_text = ""
+    # Bounded retries for the "claimed a write that didn't succeed" correction so a
+    # persistently-hallucinating model can't loop forever (falls through to discard).
+    hallucination_retries = 0
+    _MAX_HALLUCINATION_RETRIES = 2
 
     # Provenance tracking for the id anti-hallucination guard: ids the user typed,
     # ids surfaced by tool results, and ids created during this run.
@@ -867,6 +1240,10 @@ async def run_podio_agent(
     seen_item_ids: set[int] = set()
     created_task_ids: list[int] = []
     created_item_ids: list[int] = []
+    # Most recent get_app field schema this turn — used to append the real field list
+    # if the model claims it "fetched the fields" but doesn't actually list them.
+    last_app_fields: list[dict[str, Any]] = []
+    last_app_name: str = ""
 
     for _ in range(_MAX_STEPS):
         assistant_msg = await model_gateway.chat(
@@ -884,6 +1261,25 @@ async def run_podio_agent(
         tool_calls = (assistant_msg or {}).get("tool_calls") or []
         if not tool_calls:
             candidate = (assistant_msg or {}).get("content", "") or ""
+            # Weak models often serialise tool calls as TEXT (sometimes with a garbled
+            # name, e.g. get_appXYZ{"app_id":...}) instead of using the structured
+            # format — so the call never runs and the wizard stalls. Recover them and
+            # EXECUTE the read/discovery ones (e.g. get_app to show fields) so the flow
+            # progresses. Write tools are NOT auto-executed from text (a text
+            # create_flow could be the model merely describing intent); those fall
+            # through to the correction re-prompt below.
+            recovered = _extract_text_tool_calls(candidate, valid_names)
+            safe = [r for r in recovered if r["name"] not in _WRITE_TOOL_NAMES]
+            if safe:
+                logger.info("podio_agent_text_tool_calls_executed",
+                            names=[r["name"] for r in safe])
+                tool_calls = [
+                    {"function": {"name": r["name"], "arguments": r["args"]}} for r in safe
+                ]
+                # Rewrite the just-appended assistant turn as a proper tool-call turn so
+                # the following tool results are provider-valid (FIFO-matched).
+                messages[-1] = {"role": "assistant", "content": None, "tool_calls": tool_calls}
+        if not tool_calls:
             bad_reason = (
                 "garbage" if _is_garbage_reply(candidate) else
                 "hallucination" if _is_hallucinated_write(candidate, steps) else
@@ -907,8 +1303,44 @@ async def run_podio_agent(
                     })
                     # Re-enter the loop so the model can make the real call
                     continue
+                # Claimed a write/attach/set succeeded but no write tool actually
+                # succeeded this turn. Force the model to either DO it or report the
+                # real failure — never let the false success reach the user.
+                if bad_reason == "hallucination" and hallucination_retries < _MAX_HALLUCINATION_RETRIES:
+                    hallucination_retries += 1
+                    errored = [
+                        f"{s.get('tool')} → {json.dumps((s.get('result') or {}), default=str)[:200]}"
+                        for s in steps if _step_errored(s)
+                    ]
+                    detail = (
+                        " The following tool call(s) FAILED this turn: " + "; ".join(errored)
+                        if errored else
+                        " No write tool was successfully called this turn."
+                    )
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "STOP. You just claimed an action succeeded, but the tool "
+                            "results do NOT confirm it." + detail + " Check each tool "
+                            "result before confirming. If the action still needs to be "
+                            "done and is possible, make the correct tool call NOW (e.g. "
+                            "if set_item_image failed because the app has no image field, "
+                            "call attach_file_to_item instead). If it genuinely cannot be "
+                            "done, tell the user plainly that it FAILED and why — do not "
+                            "claim success. Never say 'attached'/'added'/'created'/'set' "
+                            "unless a tool returned success for that exact action."
+                        ),
+                    })
+                    continue
             else:
                 final_text = candidate
+                # If the model claims it "fetched the fields" but didn't actually list
+                # them, append the real field list so the user can choose.
+                if (last_app_fields
+                        and _claims_to_present_fields(final_text)
+                        and _count_field_labels_shown(final_text, [f.get("label") for f in last_app_fields]) < 2):
+                    logger.info("podio_agent_field_list_appended", app=last_app_name)
+                    final_text = final_text.rstrip() + "\n\n" + _render_field_list(last_app_name, last_app_fields)
             break
 
         for call in tool_calls:
@@ -971,6 +1403,32 @@ async def run_podio_agent(
                 except Exception as exc:  # noqa: BLE001
                     logger.error("podio_agent_tool_failed", tool=name, error=str(exc))
                     result = {"isError": True, "content": str(exc)}
+
+            # get_app returns a large nested app object that gets truncated before the
+            # model can read all field external_ids/types. Replace it with a compact,
+            # complete field schema so create_item/update_item can be built correctly.
+            if name == "get_app" and not (result or {}).get("isError"):
+                result = _summarise_get_app_result(result)
+                # The hosted MCP get_app often returns only a text summary (or nothing) —
+                # no field schema. When that happens, fetch the real app object from our
+                # REST client, which returns the full fields list directly from Podio.
+                if isinstance(result, dict) and not result.get("fields"):
+                    app_id_arg = args.get("app_id")
+                    if app_id_arg:
+                        try:
+                            from app.services.podio_rest import podio_rest
+                            raw_app = await podio_rest.get_app(int(app_id_arg))
+                            rest_summary = _summarise_get_app_result({"data": raw_app})
+                            if isinstance(rest_summary, dict) and rest_summary.get("fields"):
+                                result = rest_summary
+                                logger.info("podio_agent_get_app_rest_fallback", app_id=app_id_arg,
+                                            fields=result.get("field_count"))
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("podio_agent_get_app_rest_fallback_failed",
+                                           app_id=app_id_arg, error=str(exc))
+                if isinstance(result, dict) and result.get("fields"):
+                    last_app_fields = result.get("fields") or []
+                    last_app_name = (result.get("app") or {}).get("name") or ""
 
             # Harvest ids from the result so later steps can validate against them.
             _collect_ids(result, {"task_id"}, seen_task_ids)

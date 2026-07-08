@@ -16,6 +16,7 @@ Docs:
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import secrets
 import time
@@ -236,6 +237,76 @@ class PodioREST:
             resp = await client.get(f"{api}/app/{int(app_id)}", headers=headers)
             resp.raise_for_status()
             return resp.json()
+
+    @staticmethod
+    def _normalise_stream_event(e: dict[str, Any]) -> dict[str, Any]:
+        """Flatten one Podio activity-stream object to the fields the agent needs.
+        Podio nests the object either at the top level or under 'data'; read both."""
+        data = e.get("data") if isinstance(e.get("data"), dict) else {}
+
+        def pick(*keys: str) -> Any:
+            for src in (e, data):
+                for k in keys:
+                    v = src.get(k)
+                    if v not in (None, "", [], {}):
+                        return v
+            return None
+
+        app = e.get("app") or data.get("app") or {}
+        if not isinstance(app, dict):
+            app = {}
+        by = e.get("created_by") or data.get("created_by") or {}
+        if not isinstance(by, dict):
+            by = {}
+        return {
+            "type": pick("type"),                        # item | task | status | ...
+            "ref_id": pick("item_id", "task_id", "id", "comment_id", "status_id"),
+            "title": pick("title", "text", "name", "subject"),
+            "app": app.get("name"),
+            "app_id": app.get("app_id"),
+            "created_on": pick("created_on"),
+            "last_edit_on": pick("last_edit_on"),
+            "created_by": by.get("name"),
+        }
+
+    async def get_activity_stream(
+        self,
+        space_id: int | None = None,
+        app_id: int | None = None,
+        limit: int = 30,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Recent activity (items created/edited, comments, files, tasks) newest-first.
+
+        Scope precedence: app_id > space_id > global. This is the reliable way to
+        answer "what changed / what did I create or comment on today" across a WHOLE
+        workspace: unlike sorting one app's items by last_edit_on, the stream spans
+        every app AND surfaces comment/file activity — which do NOT bump an item's
+        last_edit_on and are therefore invisible to a plain get_items sort.
+        """
+        api = await self._cfg("podio_rest_api_base")
+        headers = await self._auth_headers()
+        if app_id:
+            path, scope = f"/stream/app/{int(app_id)}/", f"app:{app_id}"
+        elif space_id:
+            path, scope = f"/stream/space/{int(space_id)}/", f"space:{space_id}"
+        else:
+            path, scope = "/stream/", "global"
+        params = {"limit": min(int(limit or 30), 100), "offset": int(offset or 0)}
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.get(f"{api}{path}", headers=headers, params=params)
+            if resp.status_code != 200:
+                detail = resp.text[:400]
+                raise RuntimeError(
+                    f"Failed to get activity stream: HTTP {resp.status_code} "
+                    f"{resp.reason_phrase} — {detail}"
+                )
+            raw = resp.json() if resp.content else []
+        events = [
+            self._normalise_stream_event(ev) for ev in (raw if isinstance(raw, list) else []) if isinstance(ev, dict)
+        ]
+        logger.info("podio_rest_activity_stream", scope=scope, count=len(events))
+        return {"scope": scope, "count": len(events), "events": events}
 
     async def set_item_image(
         self, item_id: int, file_id: int, image_field: str | None = None
@@ -637,6 +708,8 @@ class PodioREST:
     @staticmethod
     def _normalise_task(raw: dict[str, Any]) -> dict[str, Any]:
         ref = raw.get("ref") or {}
+        ref_data = ref.get("data") or {}
+        ref_app = ref_data.get("app") if isinstance(ref_data.get("app"), dict) else {}
         responsible = raw.get("responsible") or {}
         return {
             "task_id": raw.get("task_id"),
@@ -648,8 +721,12 @@ class PodioREST:
             "assigned_to": responsible.get("name"),
             "assigned_profile_id": responsible.get("profile_id") or responsible.get("user_id"),
             "ref_type": ref.get("type"),
-            "ref_id": (ref.get("data") or {}).get("item_id") or ref.get("id"),
-            "ref_title": (ref.get("data") or {}).get("title"),
+            "ref_id": ref_data.get("item_id") or ref.get("id"),
+            "ref_title": ref_data.get("title"),
+            # The app the linked item belongs to (present on item-referenced tasks) —
+            # lets callers tell WHICH app a task sits in and filter workspace tasks by app.
+            "ref_app_id": ref_app.get("app_id"),
+            "ref_app_name": ref_app.get("name"),
         }
 
     async def get_task(self, task_id: int) -> dict[str, Any]:
@@ -699,6 +776,125 @@ class PodioREST:
             raw = resp.json()
         tasks = [self._normalise_task(t) for t in (raw if isinstance(raw, list) else [])]
         return {"success": True, "tasks": tasks, "count": len(tasks)}
+
+    async def _all_space_tasks(
+        self, space_id: int, completed: bool = False, page: int = 100, max_pages: int = 30
+    ) -> list[dict[str, Any]]:
+        """Every task in a workspace (paginated). Used as the fast-path source for
+        get_app_tasks when the task list carries the linked item's app."""
+        out: list[dict[str, Any]] = []
+        offset = 0
+        for _ in range(max_pages):
+            res = await self.get_tasks(
+                space_id=space_id, completed=completed, limit=page, offset=offset
+            )
+            batch = res.get("tasks", []) or []
+            out.extend(batch)
+            if len(batch) < page:
+                break
+            offset += page
+        return out
+
+    async def _app_item_ids(
+        self, app_id: int, max_items: int = 300, page: int = 100
+    ) -> tuple[list[int], bool]:
+        """All item_ids in an app via POST /item/app/{app_id}/filter/ (paginated).
+        Returns (ids, truncated) — truncated=True when the app has more than max_items."""
+        api = await self._cfg("podio_rest_api_base")
+        headers = {**(await self._auth_headers()), "Content-Type": "application/json"}
+        ids: list[int] = []
+        offset = 0
+        total = 0
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            while len(ids) < max_items:
+                resp = await client.post(
+                    f"{api}/item/app/{int(app_id)}/filter/",
+                    headers=headers,
+                    json={"limit": min(page, max_items - len(ids)), "offset": offset},
+                )
+                if resp.status_code != 200:
+                    detail = resp.text[:400]
+                    raise RuntimeError(
+                        f"Failed to list app items: HTTP {resp.status_code} "
+                        f"{resp.reason_phrase} — {detail}"
+                    )
+                data = resp.json()
+                items = data.get("items") or []
+                total = data.get("total", total) or total
+                for it in items:
+                    iid = it.get("item_id")
+                    if iid is not None:
+                        ids.append(int(iid))
+                if len(items) < page or not items:
+                    break
+                offset += len(items)
+        truncated = total > len(ids)
+        return ids, truncated
+
+    async def get_app_tasks(
+        self, app_id: int, completed: bool = False, max_items: int = 300
+    ) -> dict[str, Any]:
+        """All tasks on items in an app.
+
+        Podio has NO server-side "tasks in app" filter — GET /task/app/{id}/ only
+        returns tasks that reference the app OBJECT itself, not tasks on the app's
+        items (confirmed: it returns 0 even when items have tasks). So we:
+          1. Fast-path: pull the workspace task list and keep tasks whose linked
+             item belongs to this app (a few calls) — used only when the list
+             actually carries app info (ref_app_id populated).
+          2. Otherwise: enumerate the app's items and gather each item's tasks
+             (thorough; bounded by max_items, concurrency-limited).
+        """
+        app = await self.get_app(app_id)
+        space_id = app.get("space_id") or (app.get("space") or {}).get("space_id")
+
+        # ── Fast-path: filter workspace tasks by the task's linked-item app ──────
+        if space_id:
+            ws = await self._all_space_tasks(space_id, completed=completed)
+            if any(t.get("ref_app_id") is not None for t in ws):
+                matched = [t for t in ws if t.get("ref_app_id") == int(app_id)]
+                logger.info(
+                    "podio_rest_app_tasks", app_id=app_id, strategy="workspace_filter",
+                    count=len(matched),
+                )
+                return {
+                    "success": True, "app_id": int(app_id), "strategy": "workspace_filter",
+                    "tasks": matched, "count": len(matched),
+                }
+
+        # ── Thorough: enumerate items, fetch each item's tasks ───────────────────
+        item_ids, truncated = await self._app_item_ids(app_id, max_items=max_items)
+        sem = asyncio.Semaphore(6)
+
+        async def _one(iid: int) -> list[dict[str, Any]]:
+            async with sem:
+                try:
+                    return await self.get_reference_tasks("item", iid)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("podio_rest_app_tasks_item_failed", item_id=iid, error=str(exc))
+                    return []
+
+        results = await asyncio.gather(*[_one(i) for i in item_ids])
+        seen: set[int] = set()
+        tasks: list[dict[str, Any]] = []
+        for lst in results:
+            for t in lst:
+                tid = t.get("task_id")
+                if bool(t.get("completed", False)) != bool(completed):
+                    continue
+                if tid in seen:
+                    continue
+                seen.add(tid)
+                tasks.append(t)
+        logger.info(
+            "podio_rest_app_tasks", app_id=app_id, strategy="per_item",
+            items_scanned=len(item_ids), count=len(tasks), truncated=truncated,
+        )
+        return {
+            "success": True, "app_id": int(app_id), "strategy": "per_item",
+            "items_scanned": len(item_ids), "items_truncated": truncated,
+            "tasks": tasks, "count": len(tasks),
+        }
 
     # ── Workflow / flow operations ─────────────────────────────────────────────
 
@@ -1855,6 +2051,33 @@ class PodioREST:
             if raw_attrs is None:
                 raise ValueError(f"Effect at index {i} is missing the 'attributes' key.")
             effect_type_str = effect.get("type", "")
+
+            # Field-update effects are NOT supported by Podio's basic flow API — only
+            # task.create, comment.create, status.create work. Podio rejects a field
+            # effect with "Unknown attribute item.field.X" (and "must be string" on the
+            # value). Setting/changing a field value — even to a fixed value — requires
+            # Podio's GlobiFlow, configured manually. Fail fast with a clear message
+            # instead of surfacing Podio's cryptic 400.
+            _attr_ids: list[str] = []
+            if isinstance(raw_attrs, dict):
+                _attr_ids = [str(k) for k in raw_attrs.keys()]
+            elif isinstance(raw_attrs, list):
+                _attr_ids = [
+                    str(e.get("attribute_id"))
+                    for e in raw_attrs
+                    if isinstance(e, dict) and e.get("attribute_id")
+                ]
+            if effect_type_str in ("item.update", "item.field.update") or any(
+                a.startswith("item.field") for a in _attr_ids
+            ):
+                raise RuntimeError(
+                    "Updating a field value is not a supported automation effect in Podio's "
+                    "flow API (Podio returns 'Unknown attribute'). Supported flow effects are: "
+                    "create a task (task.create), add a comment (comment.create), or post a "
+                    "status update (status.create). To auto-change a field value, set it up in "
+                    "Podio's GlobiFlow / Workflow Automation manually inside Podio."
+                )
+
             if effect_type_str == "comment.create":
                 arr: list[dict[str, Any]] = [
                     {"attribute_id": _COMMENT_TEXT_ATTR, "value": _extract_comment_text(raw_attrs)}
