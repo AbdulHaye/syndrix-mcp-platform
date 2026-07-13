@@ -1943,42 +1943,53 @@ class PodioREST:
     ) -> dict[str, Any]:
         """Update an existing Podio flow's name, trigger config, or effects.
 
-        The flow's trigger type (cause) cannot be changed — if ``trigger_type``
-        is provided and differs from the current value, this raises a ValueError
-        explaining that the caller must delete and recreate the flow.
-        Effects on update must use the 'values' key (not 'attributes').
+        ⚠️ Podio's PUT /flow/{id}/ is a FULL REPLACE: it REQUIRES ``name`` (400
+        "missing required properties: ['name']" without it) and DROPS any config/
+        effects you omit (a name-only PUT wipes the field-trigger filter). So we
+        fetch the current flow and MERGE — only the parts you pass are changed.
+
+        Effects on update use the ``attributes`` array (same as create) — the old
+        "use 'values'" guidance was wrong and makes PUT 500. ``_normalise_flow_effects``
+        accepts either key. The trigger type (cause) cannot be changed — pass a
+        differing ``trigger_type`` and this raises, telling you to delete + recreate.
         """
         if name is None and config is None and effects is None:
             raise ValueError("At least one of 'name', 'config', or 'effects' must be provided.")
 
-        if trigger_type is not None:
-            current = await self.get_flow(flow_id)
-            if current.get("trigger_type") != trigger_type:
-                raise ValueError(
-                    f"A flow's trigger type cannot be changed after creation "
-                    f"(current: '{current.get('trigger_type')}', requested: '{trigger_type}'). "
-                    "Delete this flow and create a new one with the desired trigger type."
-                )
+        current = await self.get_flow(flow_id)
 
-        if effects is not None:
-            for i, effect in enumerate(effects):
-                if "type" not in effect:
-                    raise ValueError(f"Effect at index {i} is missing the required 'type' key.")
-                if "values" not in effect:
-                    raise ValueError(
-                        f"Effect at index {i} is missing the 'values' key. "
-                        "Use 'values' (not 'attributes') for effects when updating a flow."
+        if trigger_type is not None and current.get("trigger_type") != trigger_type:
+            raise ValueError(
+                f"A flow's trigger type cannot be changed after creation "
+                f"(current: '{current.get('trigger_type')}', requested: '{trigger_type}'). "
+                "Delete this flow and create a new one with the desired trigger type."
+            )
+
+        # Merge with the current flow so unspecified parts are preserved (PUT replaces).
+        final_name = name if name is not None else current.get("name")
+        final_effects = (
+            self._normalise_flow_effects(effects)
+            if effects is not None
+            else self._normalise_flow_effects(current.get("effects") or [])
+        )
+        if config is not None:
+            final_config = dict(config)
+            if final_config.get("field_ids"):
+                app_id = current.get("app_id")
+                if app_id:
+                    final_config["field_ids"] = await self._resolve_flow_field_ids(
+                        app_id, final_config["field_ids"]
                     )
+        else:
+            final_config = current.get("config")
 
         api = await self._cfg("podio_rest_api_base")
         headers = {**(await self._auth_headers()), "Content-Type": "application/json"}
-        body: dict[str, Any] = {}
-        if name is not None:
-            body["name"] = name
-        if config is not None:
-            body["config"] = config
-        if effects is not None:
-            body["effects"] = effects
+        body: dict[str, Any] = {"name": final_name}
+        if final_config is not None:
+            body["config"] = final_config
+        if final_effects:
+            body["effects"] = final_effects
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.put(f"{api}/flow/{int(flow_id)}/", headers=headers, json=body)
@@ -1989,8 +2000,167 @@ class PodioREST:
                     f" — {detail}"
                 )
             data = resp.json() if resp.content else {}
-        logger.info("podio_rest_flow_updated", flow_id=flow_id, updated_keys=list(body.keys()))
+        logger.info(
+            "podio_rest_flow_updated",
+            flow_id=flow_id,
+            changed=[k for k, v in (("name", name), ("config", config), ("effects", effects)) if v is not None],
+        )
         return {"flow_id": flow_id, "updated": True, **(data or {})}
+
+    async def _resolve_flow_field_ids(self, app_id: int, refs: list[Any]) -> list[int]:
+        """Map each flow-trigger field reference to a real numeric field_id.
+
+        Accepts numeric field_ids, external_id strings, or field labels. Validates
+        every reference against the app's live schema so a hallucinated/wrong field_id
+        fails fast with the valid options instead of Podio's opaque 404 "Object not found".
+        """
+        app = await self.get_app(int(app_id))
+        raw = app.get("data") if isinstance(app, dict) and "data" in app else app
+        fields = (raw or {}).get("fields") or [] if isinstance(raw, dict) else []
+        by_id: set[int] = set()
+        lookup: dict[str, int] = {}
+        for f in fields:
+            fid = f.get("field_id")
+            if fid is None:
+                continue
+            by_id.add(int(fid))
+            ext = f.get("external_id")
+            if ext:
+                lookup[str(ext).strip().lower()] = int(fid)
+            label = (f.get("config") or {}).get("label")
+            if label:
+                lookup[str(label).strip().lower()] = int(fid)
+
+        resolved: list[int] = []
+        for ref in refs:
+            try:
+                n = int(ref)
+                if n in by_id:
+                    resolved.append(n)
+                    continue
+            except (TypeError, ValueError):
+                pass
+            key = str(ref).strip().lower()
+            if key in lookup:
+                resolved.append(lookup[key])
+                continue
+            valid = ", ".join(
+                f"{(f.get('config') or {}).get('label')} (field_id={f.get('field_id')}, "
+                f"external_id={f.get('external_id')})"
+                for f in fields
+            ) or "(app returned no fields)"
+            raise RuntimeError(
+                f"Flow trigger field '{ref}' does not exist on app {app_id}. "
+                f"Pass a valid numeric field_id, external_id, or label. Available fields: {valid}"
+            )
+        return resolved
+
+    @staticmethod
+    def _normalise_flow_effects(effects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Normalise flow effects to the shape Podio requires for BOTH create and update.
+
+        Podio wants each effect's payload under the key ``attributes`` as an ARRAY of
+        ``{attribute_id, value}`` objects with STRING values, for create (POST) AND
+        update (PUT). NOTE: the old "use 'values' on update" guidance was WRONG — a
+        ``values`` key (array or dict) makes PUT /flow/{id}/ 500. This accepts attributes
+        given as a dict, a list, or under the legacy ``values`` key; strips each element
+        to just ``{attribute_id, value}`` (drops Podio's echoed label/effect_id/null
+        values); and coerces every value to a string ("Invalid value N (integer): must
+        be string"). Field-update effects are rejected up front (unsupported by Podio).
+        Official attribute_id strings: comment.create→"comment.value",
+        status.create→"status.value", task.create→"task.text"/"task.due"/"task.responsible".
+        """
+        def _extract_comment_text(attrs: Any) -> str:
+            if isinstance(attrs, dict):
+                for key in ("text", "value", "content", "comment"):
+                    if attrs.get(key):
+                        return str(attrs[key])
+                return str(next(iter(attrs.values()), ""))
+            if isinstance(attrs, list):
+                for elem in attrs:
+                    if isinstance(elem, dict):
+                        v = elem.get("value") or next(
+                            (elem[k] for k in elem if k != "attribute_id"), None
+                        )
+                        if v:
+                            return str(v)
+            return str(attrs) if attrs else ""
+
+        out: list[dict[str, Any]] = []
+        for i, effect in enumerate(effects):
+            if "type" not in effect:
+                raise ValueError(f"Effect at index {i} is missing the required 'type' key.")
+            # Accept the payload under 'attributes' OR the legacy 'values' key.
+            raw_attrs = effect.get("attributes")
+            if raw_attrs is None:
+                raw_attrs = effect.get("values")
+            if raw_attrs is None:
+                raise ValueError(f"Effect at index {i} is missing the 'attributes' key.")
+            effect_type_str = effect.get("type", "")
+
+            # Field-update effects are NOT supported by Podio's basic flow API — only
+            # task.create, comment.create, status.create work (Podio: "Unknown attribute
+            # item.field.X"). Field updates require GlobiFlow. Fail fast with a clear message.
+            _attr_ids: list[str] = []
+            if isinstance(raw_attrs, dict):
+                _attr_ids = [str(k) for k in raw_attrs.keys()]
+            elif isinstance(raw_attrs, list):
+                _attr_ids = [
+                    str(e.get("attribute_id"))
+                    for e in raw_attrs
+                    if isinstance(e, dict) and e.get("attribute_id")
+                ]
+            if effect_type_str in ("item.update", "item.field.update") or any(
+                a.startswith("item.field") for a in _attr_ids
+            ):
+                raise RuntimeError(
+                    "Updating a field value is not a supported automation effect in Podio's "
+                    "flow API (Podio returns 'Unknown attribute'). Supported flow effects are: "
+                    "create a task (task.create), add a comment (comment.create), or post a "
+                    "status update (status.create). To auto-change a field value, set it up in "
+                    "Podio's GlobiFlow / Workflow Automation manually inside Podio."
+                )
+
+            if effect_type_str == "comment.create":
+                arr: list[dict[str, Any]] = [
+                    {"attribute_id": "comment.value", "value": _extract_comment_text(raw_attrs)}
+                ]
+            elif isinstance(raw_attrs, dict):
+                arr = [{"attribute_id": k, "value": v} for k, v in raw_attrs.items()]
+            elif isinstance(raw_attrs, list):
+                arr = []
+                for elem in raw_attrs:
+                    if isinstance(elem, dict) and "attribute_id" in elem:
+                        arr.append({"attribute_id": elem["attribute_id"], "value": elem.get("value")})
+                    elif isinstance(elem, dict):
+                        for k, v in elem.items():
+                            arr.append({"attribute_id": k, "value": v})
+                    else:
+                        arr.append(elem)
+            else:
+                arr = raw_attrs
+
+            # Drop null/empty values (Podio echoes task.responsible/description as null),
+            # then stringify every remaining value.
+            if isinstance(arr, list):
+                cleaned: list[Any] = []
+                for elem in arr:
+                    if not isinstance(elem, dict):
+                        cleaned.append(elem)
+                        continue
+                    val = elem.get("value")
+                    if val is None or val == "":
+                        continue
+                    cleaned.append({"attribute_id": elem.get("attribute_id"), "value": str(val)})
+                arr = cleaned
+
+            # Re-emit a clean effect: keep 'type', drop 'values'/echoed 'effect_id'/'config'.
+            clean_effect = {
+                k: v for k, v in effect.items()
+                if k not in ("values", "attributes", "effect_id", "config")
+            }
+            out.append({**clean_effect, "type": effect_type_str, "attributes": arr})
+        return out
 
     async def create_flow(
         self,
@@ -2019,82 +2189,16 @@ class PodioREST:
         if not effects:
             raise ValueError("At least one effect must be provided.")
 
-        # Normalise the 'attributes' field in each effect.
-        # Podio requires attributes as an ARRAY of {attribute_id, value} objects.
-        # Official attribute_id strings (developers.podio.com/doc/flows):
-        #   comment.create → "comment.value"
-        #   status.create  → "status.value"
-        #   task.create    → "task.text", "task.due", "task.responsible"
-        _COMMENT_TEXT_ATTR = "comment.value"
+        normalised_effects = self._normalise_flow_effects(effects)
 
-        def _extract_comment_text(attrs: Any) -> str:
-            if isinstance(attrs, dict):
-                for key in ("text", "value", "content", "comment"):
-                    if attrs.get(key):
-                        return str(attrs[key])
-                return str(next(iter(attrs.values()), ""))
-            if isinstance(attrs, list):
-                for elem in attrs:
-                    if isinstance(elem, dict):
-                        v = elem.get("value") or next(
-                            (elem[k] for k in elem if k != "attribute_id"), None
-                        )
-                        if v:
-                            return str(v)
-            return str(attrs) if attrs else ""
-
-        normalised_effects: list[dict[str, Any]] = []
-        for i, effect in enumerate(effects):
-            if "type" not in effect:
-                raise ValueError(f"Effect at index {i} is missing the required 'type' key.")
-            raw_attrs = effect.get("attributes")
-            if raw_attrs is None:
-                raise ValueError(f"Effect at index {i} is missing the 'attributes' key.")
-            effect_type_str = effect.get("type", "")
-
-            # Field-update effects are NOT supported by Podio's basic flow API — only
-            # task.create, comment.create, status.create work. Podio rejects a field
-            # effect with "Unknown attribute item.field.X" (and "must be string" on the
-            # value). Setting/changing a field value — even to a fixed value — requires
-            # Podio's GlobiFlow, configured manually. Fail fast with a clear message
-            # instead of surfacing Podio's cryptic 400.
-            _attr_ids: list[str] = []
-            if isinstance(raw_attrs, dict):
-                _attr_ids = [str(k) for k in raw_attrs.keys()]
-            elif isinstance(raw_attrs, list):
-                _attr_ids = [
-                    str(e.get("attribute_id"))
-                    for e in raw_attrs
-                    if isinstance(e, dict) and e.get("attribute_id")
-                ]
-            if effect_type_str in ("item.update", "item.field.update") or any(
-                a.startswith("item.field") for a in _attr_ids
-            ):
-                raise RuntimeError(
-                    "Updating a field value is not a supported automation effect in Podio's "
-                    "flow API (Podio returns 'Unknown attribute'). Supported flow effects are: "
-                    "create a task (task.create), add a comment (comment.create), or post a "
-                    "status update (status.create). To auto-change a field value, set it up in "
-                    "Podio's GlobiFlow / Workflow Automation manually inside Podio."
-                )
-
-            if effect_type_str == "comment.create":
-                arr: list[dict[str, Any]] = [
-                    {"attribute_id": _COMMENT_TEXT_ATTR, "value": _extract_comment_text(raw_attrs)}
-                ]
-            elif isinstance(raw_attrs, dict):
-                arr = [{"attribute_id": k, "value": v} for k, v in raw_attrs.items()]
-            elif isinstance(raw_attrs, list):
-                arr = []
-                for elem in raw_attrs:
-                    if isinstance(elem, dict) and "attribute_id" not in elem:
-                        for k, v in elem.items():
-                            arr.append({"attribute_id": k, "value": v})
-                    else:
-                        arr.append(elem)
-            else:
-                arr = raw_attrs
-            normalised_effects.append({**effect, "attributes": arr})
+        # Resolve/validate a filtered item.update trigger's field_ids against the
+        # LIVE app schema. Models routinely hallucinate a numeric field_id (e.g.
+        # 45577653 for Category whose real field_id is 223289103) → Podio returns a
+        # cryptic 404 "Object not found". Accept a numeric field_id, an external_id,
+        # or a field label and map every one to the real numeric field_id; fail fast
+        # with the valid options if a reference cannot be resolved.
+        if config and config.get("field_ids"):
+            config = {**config, "field_ids": await self._resolve_flow_field_ids(app_id, config["field_ids"])}
 
         api = await self._cfg("podio_rest_api_base")
         headers = {**(await self._auth_headers()), "Content-Type": "application/json"}
@@ -2135,13 +2239,18 @@ class PodioREST:
                     f" — {detail}"
                 )
             raw: dict[str, Any] = resp.json()
+        ref = raw.get("ref") if isinstance(raw.get("ref"), dict) else {}
         return {
             "flow_id": raw.get("flow_id"),
             "name": raw.get("name"),
             "trigger_type": raw.get("type"),
-            "active": raw.get("active", False),
+            # Podio omits 'active' on flow objects; a created flow is live. See get_app_flows.
+            "active": raw.get("active", True),
             "config": raw.get("config"),
             "effects": raw.get("effects") or [],
+            # The app this flow is attached to (ref.type == "app") — needed to resolve
+            # field_ids when updating the flow.
+            "app_id": ref.get("id"),
         }
 
     async def get_flow_attributes(self, flow_id: int) -> list[dict[str, Any]]:
@@ -2186,7 +2295,10 @@ class PodioREST:
                 "flow_id": f.get("flow_id"),
                 "name": f.get("name"),
                 "trigger_type": f.get("type"),
-                "active": f.get("active", False),
+                # Podio's flow object omits an 'active' key entirely — a flow is live the
+                # moment it is created (no activation endpoint exists). Absence ≠ inactive,
+                # so default to True to avoid falsely reporting a working flow as disabled.
+                "active": f.get("active", True),
             }
             for f in (raw if isinstance(raw, list) else [])
         ]

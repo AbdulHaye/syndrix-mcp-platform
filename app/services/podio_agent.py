@@ -234,6 +234,27 @@ _HALLUCINATED_SUCCESS_PHRASES = (
     "have been attached", "attached the file", "attached to the item",
     "file attached", "file has been", "image set", "image has been set",
     "set as the item", "successfully uploaded", "upload successful",
+    # flow / automation replace + activate claims (delete+recreate scenarios)
+    "successfully replaced", "has been replaced", "successfully saved",
+    "now active", "is active", "status: active", "flow created",
+    "automation created", "flow has been", "automation has been",
+    "automation is active", "flow is active",
+)
+
+# Write tools that CREATE/attach something new. A "created / replaced / now active"
+# claim must be backed by one of these SUCCEEDING — a successful delete_flow (e.g. a
+# delete+recreate where the recreate failed, leaving nothing) does NOT justify it.
+_CREATE_WRITE_TOOLS = {
+    "create_item", "create_task", "create_flow", "create_webhook", "clone_item",
+    "update_item", "update_task", "update_flow", "update_item_field",
+    "attach_file_to_item", "set_item_image", "add_comment",
+}
+_CREATE_SUCCESS_PHRASES = (
+    "successfully created", "has been created", "successfully replaced",
+    "has been replaced", "now active", "is active", "status: active",
+    "task created", "task has been created", "flow created", "automation created",
+    "automation is active", "flow is active", "successfully saved", "created and",
+    "successfully attached", "has been attached", "attached successfully",
 )
 
 _WRITE_TOOL_NAMES = {
@@ -300,8 +321,21 @@ def _is_hallucinated_write(text: str, steps: list[dict]) -> bool:
     """True when the reply claims a write/attach/set/delete SUCCEEDED but no write
     tool completed successfully this turn — i.e. none was called, or every one that
     was called returned an error. A write tool that ERRORED does NOT count as done:
-    the model must report the failure, never claim success on a failed call."""
+    the model must report the failure, never claim success on a failed call.
+
+    Special case (delete+recreate): a "created / replaced / now active" claim must be
+    backed by a CREATE-type write succeeding. A successful delete_flow alone — with the
+    recreate erroring, leaving nothing behind — is NOT success and must not pass."""
     t = (text or "").lower()
+    claims_create = any(p in t for p in _CREATE_SUCCESS_PHRASES)
+    if claims_create:
+        created_ok = any(s.get("tool") in _CREATE_WRITE_TOOLS and not _step_errored(s) for s in steps)
+        create_errored = any(s.get("tool") in _CREATE_WRITE_TOOLS and _step_errored(s) for s in steps)
+        # A create-type write ERRORED this turn and none succeeded, yet the reply claims
+        # a create/replace/activate succeeded — the delete+recreate-failed trap. Flag it
+        # even if an unrelated delete succeeded this turn.
+        if create_errored and not created_ok:
+            return True
     claims_success = any(p in t for p in _HALLUCINATED_SUCCESS_PHRASES)
     if not claims_success:
         return False
@@ -750,15 +784,17 @@ STEP 3 — NAME. Suggest a descriptive name and confirm (e.g. "Product Updated -
 STEP 4 — Only AFTER trigger, action, and name are settled, call tools:
 1. Call get_app_flows(app_id) — check for duplicates.
 2. If item.update + specific field(s): pass field_ids=[<numeric field_id>, ...] to create_flow
-   (the numeric field_id from get_app, NOT the external_id string) so only those field changes fire.
-   Every field in the get_app schema HAS a "field_id" — read it there. Do NOT claim "field_id is
-   missing"; if get_app returned no fields at all, that is a schema-fetch problem to report, not a
-   reason to refuse a supported automation.
+   (the numeric field_id from get_app) so only those field changes fire. If you are unsure of the
+   numeric id you MAY pass the field's external_id string instead (e.g. "category") — the tool
+   resolves it to the real field_id and validates it. NEVER invent a field_id: every field in the
+   get_app schema HAS one — read it there. Do NOT claim "field_id is missing"; if get_app returned
+   no fields at all, that is a schema-fetch problem to report, not a reason to refuse the automation.
 3. Build the effects list. Podio requires attributes as an array of {attribute_id, value} objects.
    Official attribute_id strings (from developers.podio.com/doc/flows):
    - comment.create:      [{"type": "comment.create", "attributes": [{"attribute_id": "comment.value", "value": "<comment text>"}]}]
    - status.create:       [{"type": "status.create", "attributes": [{"attribute_id": "status.value", "value": "<status text>"}]}]
-   - task.create:         [{"type": "task.create", "attributes": [{"attribute_id": "task.text", "value": "<description>"}, {"attribute_id": "task.due", "value": 0}]}]
+   - task.create:         [{"type": "task.create", "attributes": [{"attribute_id": "task.text", "value": "<description>"}, {"attribute_id": "task.due", "value": "7"}]}]
+     (task.due is the number of days as a STRING — "7" for next week, "0" for the trigger day. All effect values must be strings.)
    - conversation.create: attributes use "conversation.subject", "conversation.text", "conversation.participant"
    ⚠️ There is NO supported "update a field" effect — do NOT build an effect of type item.update or an
       attribute_id like "item.field.X"; Podio rejects it ("Unknown attribute"). Use only task/comment/status.
@@ -768,8 +804,13 @@ STEP 4 — Only AFTER trigger, action, and name are settled, call tools:
 5. Call create_flow(app_id, trigger_type, name, effects, field_ids?).
 6. Report the new flow_id and confirm the automation is active.
 
-To UPDATE: update_flow(flow_id, name?, effects=[{"type":"...", "values":{...}}]).
-  Trigger type CANNOT be changed — delete and recreate. Use "values" key (not "attributes") on update.
+To UPDATE: update_flow(flow_id, name?, config?, effects?) — pass ONLY the parts you want to
+  change; it MERGES with the current flow (a rename will NOT wipe the field trigger). Effects use
+  the SAME "attributes" array as create (NOT a "values" key — that 500s). To change which field a
+  filtered trigger watches, pass config={"field_ids":[<field_id or external_id>]}. Trigger TYPE
+  (item.create/update/delete) cannot be changed — for that, delete_flow then create_flow.
+  ⚠️ Prefer update_flow over delete+recreate for content/name/field changes; only delete+recreate
+     when the TRIGGER TYPE itself must change, and if the recreate fails, do NOT report success.
 To DELETE: delete_flow(flow_id) — confirm with user first.
 To INSPECT: get_flow(flow_id) — shows full trigger + effects config.
 ---
@@ -925,30 +966,58 @@ def _extract_balanced_json(text: str, start: int) -> str | None:
     return None
 
 
+def _tool_name_for_json(text: str, brace_pos: int, valid_names: set[str]) -> str:
+    """Infer which tool a standalone JSON object at ``brace_pos`` belongs to.
+
+    (1) An identifier glued immediately before the '{' (``create_flow{...}``,
+        ``create_flow({...})``, or a garbled ``get_appXYZ{...}``) — recovered via
+        _recover_tool_name. (2) Otherwise the LAST valid tool name mentioned in the
+        preceding ~240 chars of prose (models often write "Calling create_flow …"
+        then dump the args as a bare JSON block). Empty string if neither resolves."""
+    prefix = text[:brace_pos]
+    m = re.search(r"([A-Za-z_][A-Za-z0-9_]{1,60})[\"']?\s*[:(]?\s*$", prefix)
+    if m:
+        name, _ = _recover_tool_name(m.group(1), valid_names)
+        if name in valid_names:
+            return name
+    window = prefix[-240:]
+    best_pos, best_name = -1, ""
+    for vn in valid_names:
+        for mm in re.finditer(r"\b" + re.escape(vn) + r"\b", window):
+            if mm.start() > best_pos:
+                best_pos, best_name = mm.start(), vn
+    return best_name
+
+
 def _extract_text_tool_calls(text: str, valid_names: set[str]) -> list[dict[str, Any]]:
-    """Recover tool calls a (weak) model wrote as plain TEXT instead of using the
-    structured function-calling format — e.g. `get_app{"app_id":123}`,
-    `create_flow({...})`, or a garbled `get_appXYZ{"app_id":123}`. The tool name is
-    normalised via _recover_tool_name (handles glued/unicode noise). Only calls that
-    resolve to a real tool with a valid JSON-object argument are returned."""
+    """Recover tool calls a model wrote as plain TEXT instead of using the structured
+    function-calling format — e.g. `get_app{"app_id":123}`, `create_flow({...})`, a
+    garbled `get_appXYZ{"app_id":123}`, OR a bare JSON block whose tool name is only
+    named in the preceding prose ("Calling create_flow …\\n{...}"). Scans TOP-LEVEL
+    JSON objects, attributes each to a tool via _tool_name_for_json, and returns those
+    that resolve to a real tool with a valid JSON-object argument."""
     if not text or "{" not in text:
         return []
     calls: list[dict[str, Any]] = []
-    for m in re.finditer(r"([A-Za-z_][A-Za-z0-9_]{1,60})\s*[:(]?\s*\{", text):
-        name_tok = m.group(1)
-        brace_start = m.end() - 1  # position of '{'
-        obj = _extract_balanced_json(text, brace_start)
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] != "{":
+            i += 1
+            continue
+        obj = _extract_balanced_json(text, i)
         if not obj:
+            i += 1
             continue
         try:
             args = json.loads(obj)
         except (json.JSONDecodeError, ValueError):
+            i += 1
             continue
-        if not isinstance(args, dict):
-            continue
-        name, _ = _recover_tool_name(name_tok, valid_names)
-        if name in valid_names:
-            calls.append({"name": name, "args": args})
+        if isinstance(args, dict):
+            name = _tool_name_for_json(text, i, valid_names)
+            if name in valid_names:
+                calls.append({"name": name, "args": args})
+        i += len(obj)  # skip past this object (don't re-scan its nested braces)
     return calls
 
 
@@ -1280,12 +1349,18 @@ async def run_podio_agent(
                 # the following tool results are provider-valid (FIFO-matched).
                 messages[-1] = {"role": "assistant", "content": None, "tool_calls": tool_calls}
         if not tool_calls:
+            # Order matters: a serialised tool call (text_tool_call) must be caught
+            # BEFORE template_vars / non_ascii. A text create_flow whose payload happens
+            # to contain a {{placeholder}} (very common in flow comment values) would
+            # otherwise be misclassified as template_vars and SILENTLY DROPPED — the loop
+            # would break instead of re-prompting the model to make the real structured
+            # call, so the tool never runs.
             bad_reason = (
                 "garbage" if _is_garbage_reply(candidate) else
                 "hallucination" if _is_hallucinated_write(candidate, steps) else
+                "text_tool_call" if _has_text_tool_call(candidate) else
                 "template_vars" if _has_template_vars(candidate) else
                 "non_ascii" if _has_non_ascii_garbage(candidate) else
-                "text_tool_call" if _has_text_tool_call(candidate) else
                 None
             )
             if bad_reason:
@@ -1296,9 +1371,15 @@ async def run_podio_agent(
                     messages.append({
                         "role": "user",
                         "content": (
-                            "You wrote a tool call as plain text instead of using the "
-                            "function-calling format. Do NOT output JSON or code — make "
-                            "the actual structured tool call right now."
+                            "You wrote a tool call as plain text/JSON instead of using the "
+                            "function-calling channel, so it did NOT run. Do NOT print JSON, "
+                            "code blocks, or a '{...}' object in your reply — invoke the tool "
+                            "using the structured function-calling format right now. "
+                            "Also: never put {{placeholder}} / {{field}} template variables in "
+                            "any argument value — Podio does not substitute them. A flow "
+                            "comment must be LITERAL text (it cannot inject the changed field's "
+                            "value; that needs GlobiFlow). Use plain wording like "
+                            "\"The Category was updated.\""
                         ),
                     })
                     # Re-enter the loop so the model can make the real call

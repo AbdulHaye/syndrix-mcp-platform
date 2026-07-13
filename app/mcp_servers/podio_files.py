@@ -873,7 +873,7 @@ async def list_webhooks(ref_type: str, ref_id: int) -> dict[str, Any]:
         "Discover the required attribute IDs needed to configure a specific Podio flow effect. "
         "Pass app_id and effect_type (e.g. 'task.create', 'item.update', 'comment.create'). "
         "Returns each attribute's ID, label, type, and whether it is required. "
-        "Use this before building the 'attributes' dict for create_flow or the 'values' dict for update_flow."
+        "Use this before building the 'attributes' array for create_flow or update_flow."
     ),
 )
 async def get_flow_effect_attributes(app_id: int, effect_type: str) -> dict[str, Any]:
@@ -944,8 +944,13 @@ async def delete_flow(flow_id: int) -> dict[str, Any]:
     description=(
         "Update an existing Podio automated workflow. "
         "Pass flow_id and at least one of: name (rename), config (trigger config), "
-        "or effects (replace the actions list). "
-        "Effects on update must use the 'values' key for parameters — not 'attributes'. "
+        "or effects (replace the actions list). Only the parts you pass change — the "
+        "tool merges with the current flow, so a rename does NOT wipe the trigger filter. "
+        "Effects use the SAME 'attributes' array as create_flow: "
+        "[{\"type\":\"task.create\",\"attributes\":[{\"attribute_id\":\"task.text\",\"value\":\"...\"}]}]. "
+        "(Do NOT use a 'values' key — Podio's update endpoint 500s on it.) "
+        "config for a filtered item.update trigger: {\"field_ids\":[<field_id or external_id>]} — "
+        "resolved and validated against the app automatically. "
         "⚠️  The trigger type (item.create / item.update) cannot be changed. "
         "If you pass trigger_type and it differs from the current value, the tool returns "
         "an error instructing you to delete and recreate the flow instead."
@@ -1002,7 +1007,15 @@ async def create_flow(
 ) -> dict[str, Any]:
     from app.services.podio_rest import podio_rest
 
-    config = {"field_ids": [int(f) for f in field_ids]} if field_ids else None
+    # Keep field refs as-is (numeric field_id, external_id, or label). podio_rest
+    # resolves/validates them against the live app schema so a wrong id fails clearly.
+    def _coerce_field_ref(f: Any) -> Any:
+        try:
+            return int(f)
+        except (TypeError, ValueError):
+            return f
+
+    config = {"field_ids": [_coerce_field_ref(f) for f in field_ids]} if field_ids else None
     try:
         result = await podio_rest.create_flow(int(app_id), trigger_type, name, effects, config=config)
         return {"success": True, **result}
