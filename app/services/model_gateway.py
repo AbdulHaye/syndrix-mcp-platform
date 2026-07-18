@@ -164,7 +164,7 @@ class ModelGateway:
     def _split_model(model: str) -> tuple[str, str]:
         """Parse a 'provider:model' string. Defaults to the ollama provider."""
         if ":" in model and model.split(":", 1)[0] in (
-            "ollama", "google", "groq", "mistral", "openai", "anthropic"
+            "ollama", "google", "groq", "mistral", "openai", "anthropic", "zai"
         ):
             provider, name = model.split(":", 1)
             return provider, name
@@ -197,6 +197,8 @@ class ModelGateway:
             return await self._openai_chat(messages, tools, name, num_predict)
         if provider == "anthropic":
             return await self._anthropic_chat(messages, tools, name, num_predict)
+        if provider == "zai":
+            return await self._zai_chat(messages, tools, name, num_predict)
         return await self._ollama_chat(messages, tools, name, num_predict)
 
     async def _ollama_chat(
@@ -216,31 +218,39 @@ class ModelGateway:
             payload["tools"] = tools
 
         log = logger.bind(model=model_name, task="chat", provider="ollama", with_tools=bool(tools))
-        try:
-            async with httpx.AsyncClient(timeout=_OLLAMA_CHAT_TIMEOUT) as client:
-                response = await client.post(f"{self._base_url}/api/chat", json=payload)
-                response.raise_for_status()
-                data = response.json()
-                message: dict[str, Any] = data.get("message", {}) or {}
-                if "content" in message:
-                    message["content"] = self._content_to_text(message.get("content"))
-                log.info("chat_ok", msg_count=len(messages), tool_calls=len(message.get("tool_calls") or []))
-                return message
-        except httpx.HTTPStatusError as exc:
-            detail = exc.response.text[:500]
-            log.error("chat_http_error", status=exc.response.status_code, detail=detail)
-            # Surface Ollama's actual message (e.g. "<model> does not support tools").
-            raise RuntimeError(f"Ollama API {exc.response.status_code}: {detail}") from exc
-        except httpx.TimeoutException as exc:
-            log.error("chat_timeout", model=model_name, timeout=_OLLAMA_CHAT_TIMEOUT, detail=str(exc))
-            raise RuntimeError(
-                f"Ollama timed out after {int(_OLLAMA_CHAT_TIMEOUT)}s (model={model_name}). "
-                "This local model is slow with many tools — try a Gemini model, or set "
-                "OLLAMA_TIMEOUT higher."
-            ) from exc
-        except httpx.RequestError as exc:
-            log.error("chat_request_error", detail=str(exc))
-            raise
+        _RETRY_DELAYS = [1, 2, 4]  # seconds between transient connection-error retries
+        for attempt, retry_delay in enumerate([0] + _RETRY_DELAYS):
+            if retry_delay:
+                log.warning("chat_connection_retry", attempt=attempt, wait=retry_delay)
+                await asyncio.sleep(retry_delay)
+            try:
+                async with httpx.AsyncClient(timeout=_OLLAMA_CHAT_TIMEOUT) as client:
+                    response = await client.post(f"{self._base_url}/api/chat", json=payload)
+                    response.raise_for_status()
+                    data = response.json()
+                    message: dict[str, Any] = data.get("message", {}) or {}
+                    if "content" in message:
+                        message["content"] = self._content_to_text(message.get("content"))
+                    log.info("chat_ok", msg_count=len(messages), tool_calls=len(message.get("tool_calls") or []))
+                    return message
+            except httpx.HTTPStatusError as exc:
+                detail = exc.response.text[:500]
+                log.error("chat_http_error", status=exc.response.status_code, detail=detail)
+                # Surface Ollama's actual message (e.g. "<model> does not support tools").
+                raise RuntimeError(f"Ollama API {exc.response.status_code}: {detail}") from exc
+            except httpx.TimeoutException as exc:
+                log.error("chat_timeout", model=model_name, timeout=_OLLAMA_CHAT_TIMEOUT, detail=str(exc))
+                raise RuntimeError(
+                    f"Ollama timed out after {int(_OLLAMA_CHAT_TIMEOUT)}s (model={model_name}). "
+                    "This local model is slow with many tools — try a Gemini model, or set "
+                    "OLLAMA_TIMEOUT higher."
+                ) from exc
+            except httpx.TransportError as exc:
+                if attempt < len(_RETRY_DELAYS):
+                    continue
+                log.error("chat_connection_error", detail=str(exc))
+                raise RuntimeError(f"Could not connect to Ollama at {self._base_url}: {exc}") from exc
+        raise RuntimeError("Ollama chat failed after retries")  # unreachable; satisfies type checker
 
     # ── Google AI Studio (Gemini) ─────────────────────────────────────────────
 
@@ -272,15 +282,32 @@ class ModelGateway:
 
         url = f"{self._GEMINI_BASE}/models/{model_name}:generateContent?key={api_key}"
         log = logger.bind(model=model_name, task="chat", provider="google", with_tools=bool(tools))
-        try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                response = await client.post(url, json=body)
-                response.raise_for_status()
-                data = response.json()
-        except httpx.HTTPStatusError as exc:
-            detail = exc.response.text[:500]
-            log.error("chat_http_error", status=exc.response.status_code, detail=detail)
-            raise RuntimeError(f"Gemini API {exc.response.status_code}: {detail}") from exc
+        _RETRY_DELAYS = [1, 2, 4]  # seconds between transient connection-error retries
+        data: dict[str, Any] = {}
+        for attempt, retry_delay in enumerate([0] + _RETRY_DELAYS):
+            if retry_delay:
+                log.warning("chat_connection_retry", attempt=attempt, wait=retry_delay)
+                await asyncio.sleep(retry_delay)
+            try:
+                async with httpx.AsyncClient(timeout=180.0) as client:
+                    response = await client.post(url, json=body)
+                    response.raise_for_status()
+                    data = response.json()
+                    break
+            except httpx.HTTPStatusError as exc:
+                detail = exc.response.text[:500]
+                log.error("chat_http_error", status=exc.response.status_code, detail=detail)
+                raise RuntimeError(f"Gemini API {exc.response.status_code}: {detail}") from exc
+            except httpx.TimeoutException as exc:
+                if attempt < len(_RETRY_DELAYS):
+                    continue
+                log.error("chat_timeout", model=model_name, detail=str(exc))
+                raise RuntimeError(f"Gemini timed out (model={model_name})") from exc
+            except httpx.TransportError as exc:
+                if attempt < len(_RETRY_DELAYS):
+                    continue
+                log.error("chat_connection_error", model=model_name, detail=str(exc))
+                raise RuntimeError(f"Could not connect to Gemini's API after retries (model={model_name}): {exc}") from exc
 
         message = self._from_gemini_response(data)
         log.info("chat_ok", msg_count=len(messages), tool_calls=len(message.get("tool_calls") or []))
@@ -378,6 +405,11 @@ class ModelGateway:
     _GROQ_BASE = "https://api.groq.com/openai/v1"
     _MISTRAL_BASE = "https://api.mistral.ai/v1"
     _OPENAI_BASE = "https://api.openai.com/v1"
+    _ZAI_BASE = "https://api.z.ai/api/paas/v4"
+    # z.ai (unlike Groq/Mistral/OpenAI) has no confirmed public /models listing
+    # endpoint — used as a fallback in list_zai_models() so a valid key never shows
+    # an empty dropdown just because that endpoint 404s.
+    _ZAI_KNOWN_MODELS = ("glm-5.2", "glm-5.1", "glm-4.7", "glm-4.7-flash", "glm-4.6", "glm-4.6v-flash")
 
     async def _openai_chat(
         self,
@@ -430,6 +462,23 @@ class ModelGateway:
             base_url=self._MISTRAL_BASE, api_key=api_key, provider="Mistral",
         )
 
+    async def _zai_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model_name: str,
+        num_predict: int,
+    ) -> dict[str, Any]:
+        from app.services.settings_service import get_setting
+
+        api_key = await get_setting("zai_api_key")
+        if not api_key:
+            raise RuntimeError("Z.ai API key is not configured (Settings → Z.ai (GLM)).")
+        return await self._openai_compat_chat(
+            messages, tools, model_name, num_predict,
+            base_url=self._ZAI_BASE, api_key=api_key, provider="Z.ai",
+        )
+
     async def _openai_compat_chat(
         self,
         messages: list[dict[str, Any]],
@@ -475,8 +524,15 @@ class ModelGateway:
                 log.error("chat_http_error", status=exc.response.status_code, detail=detail)
                 raise RuntimeError(f"{provider} API {exc.response.status_code}: {detail}") from exc
             except httpx.TimeoutException as exc:
+                if attempt < len(_RETRY_DELAYS):
+                    continue
                 log.error("chat_timeout", model=model_name, detail=str(exc))
                 raise RuntimeError(f"{provider} timed out (model={model_name})") from exc
+            except httpx.TransportError as exc:
+                if attempt < len(_RETRY_DELAYS):
+                    continue
+                log.error("chat_connection_error", model=model_name, detail=str(exc))
+                raise RuntimeError(f"Could not connect to {provider}'s API after retries (model={model_name}): {exc}") from exc
 
         message = self._from_openai_response(data)
         log.info("chat_ok", msg_count=len(messages), tool_calls=len(message.get("tool_calls") or []))
@@ -621,10 +677,21 @@ class ModelGateway:
             "max_tokens": max(num_predict, 1024),
             "messages": a_messages,
         }
+        # Prompt caching: the system prompt and tool schemas are identical across
+        # every step of a multi-step tool-calling loop (only the growing message
+        # history changes) — marking them cacheable means a 10-step run pays full
+        # price once instead of on every step. Anthropic processes tools -> system
+        # -> messages internally, so a breakpoint at the end of each caches
+        # everything up to and including it; two separate breakpoints because the
+        # tools list is stable across an entire conversation while the system
+        # prompt's date header changes turn-to-turn (still stable WITHIN one
+        # multi-step turn, which is where the repetition actually happens).
         if system_text:
-            body["system"] = system_text
+            body["system"] = [
+                {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}
+            ]
         if tools:
-            body["tools"] = [
+            tool_defs = [
                 {
                     "name": t["function"]["name"],
                     "description": t["function"].get("description", ""),
@@ -634,6 +701,8 @@ class ModelGateway:
                 }
                 for t in tools
             ]
+            tool_defs[-1]["cache_control"] = {"type": "ephemeral"}
+            body["tools"] = tool_defs
 
         headers = {
             "x-api-key": api_key,
@@ -641,21 +710,43 @@ class ModelGateway:
             "content-type": "application/json",
         }
         log = logger.bind(model=model_name, task="chat", provider="anthropic", with_tools=bool(tools))
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                resp = await client.post(f"{self._ANTHROPIC_BASE}/messages", json=body, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPStatusError as exc:
-            detail = exc.response.text[:500]
-            log.error("chat_http_error", status=exc.response.status_code, detail=detail)
-            raise RuntimeError(f"Anthropic API {exc.response.status_code}: {detail}") from exc
-        except httpx.TimeoutException as exc:
-            log.error("chat_timeout", model=model_name, detail=str(exc))
-            raise RuntimeError(f"Anthropic timed out (model={model_name})") from exc
+        _RETRY_DELAYS = [1, 2, 4]  # seconds between transient connection-error retries
+        data: dict[str, Any] = {}
+        for attempt, retry_delay in enumerate([0] + _RETRY_DELAYS):
+            if retry_delay:
+                log.warning("chat_connection_retry", attempt=attempt, wait=retry_delay)
+                await asyncio.sleep(retry_delay)
+            try:
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    resp = await client.post(f"{self._ANTHROPIC_BASE}/messages", json=body, headers=headers)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    break
+            except httpx.HTTPStatusError as exc:
+                detail = exc.response.text[:500]
+                log.error("chat_http_error", status=exc.response.status_code, detail=detail)
+                raise RuntimeError(f"Anthropic API {exc.response.status_code}: {detail}") from exc
+            except httpx.TimeoutException as exc:
+                if attempt < len(_RETRY_DELAYS):
+                    continue
+                log.error("chat_timeout", model=model_name, detail=str(exc))
+                raise RuntimeError(f"Anthropic timed out (model={model_name})") from exc
+            except httpx.TransportError as exc:
+                if attempt < len(_RETRY_DELAYS):
+                    continue
+                log.error("chat_connection_error", model=model_name, detail=str(exc))
+                raise RuntimeError(f"Could not connect to Anthropic's API after retries (model={model_name}): {exc}") from exc
 
         message = self._from_anthropic_response(data)
-        log.info("chat_ok", msg_count=len(messages), tool_calls=len(message.get("tool_calls") or []))
+        usage = data.get("usage") or {}
+        log.info(
+            "chat_ok",
+            msg_count=len(messages),
+            tool_calls=len(message.get("tool_calls") or []),
+            cache_write_tokens=usage.get("cache_creation_input_tokens", 0),
+            cache_read_tokens=usage.get("cache_read_input_tokens", 0),
+            input_tokens=usage.get("input_tokens", 0),
+        )
         return message
 
     @staticmethod
@@ -710,13 +801,14 @@ class ModelGateway:
                     pending_ids.append(tid)
                     blocks.append({"type": "tool_use", "id": tid, "name": fn.get("name"), "input": args})
                 if not blocks:
-                    blocks = [{"type": "text", "text": " "}]
+                    blocks = [{"type": "text", "text": "(no content)"}]
                 out.append({"role": "assistant", "content": blocks})
             else:  # user
                 flush_results()
+                user_txt = ModelGateway._content_to_text(m.get("content"))
                 out.append({
                     "role": "user",
-                    "content": [{"type": "text", "text": ModelGateway._content_to_text(m.get("content"))}],
+                    "content": [{"type": "text", "text": user_txt if user_txt.strip() else "(no content)"}],
                 })
 
         flush_results()
@@ -830,6 +922,34 @@ class ModelGateway:
             return sorted(set(names))
         except Exception as exc:  # noqa: BLE001
             logger.warning("list_mistral_models_failed", error=str(exc))
+            return []
+
+    async def list_zai_models(self) -> list[str]:
+        from app.services.settings_service import get_setting
+
+        api_key = await get_setting("zai_api_key")
+        if not api_key:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{self._ZAI_BASE}/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+            if resp.status_code == 404:
+                # No models-listing endpoint at this path — fall back to the known
+                # current GLM chat/tool-calling model ids rather than an empty
+                # dropdown that gives no signal why (same failure shape as the
+                # truncated-OpenAI-key incident — see CLAUDE.md session log).
+                return list(self._ZAI_KNOWN_MODELS)
+            resp.raise_for_status()
+            data = resp.json()
+            names = [m.get("id") for m in data.get("data", []) if m.get("id")]
+            return sorted(set(names)) if names else list(self._ZAI_KNOWN_MODELS)
+        except Exception as exc:  # noqa: BLE001
+            # A genuine auth/network failure — stay empty like every other provider
+            # (an invalid key must NOT show models it can't actually call).
+            logger.warning("list_zai_models_failed", error=str(exc))
             return []
 
     async def list_openai_models(self) -> list[str]:

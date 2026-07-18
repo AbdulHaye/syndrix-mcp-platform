@@ -39,6 +39,27 @@ const GROUPS: ServiceGroup[] = [
     ],
   },
   {
+    id: "mycase",
+    label: "MyCase",
+    icon: "bi-briefcase-fill",
+    color: "#0b6fcc",
+    description:
+      "Read-only access to your MyCase practice management data for the MyCase Agent. " +
+      "Enter the Client ID, Client Secret, and Redirect URI MyCase support gave you (the " +
+      "Redirect URI must exactly match what's registered with MyCase — it can't be changed " +
+      "here), then Save and click Connect MyCase on the MyCase Agent page to log in. " +
+      "Alternatively, paste an already-obtained Access Token directly to skip the browser flow — " +
+      "if you also paste the matching Refresh Token (issued alongside it), the agent will keep " +
+      "renewing it automatically forever; without a Refresh Token it stops working after ~24h.",
+    fields: [
+      { key: "mycase_client_id",     label: "OAuth Client ID",     placeholder: "your-mycase-client-id" },
+      { key: "mycase_client_secret", label: "OAuth Client Secret", placeholder: "your-mycase-client-secret", secret: true },
+      { key: "mycase_redirect_uri",  label: "Redirect URI",        placeholder: "http://localhost:8000/integrations/mycase/callback" },
+      { key: "mycase_access_token",  label: "Access Token (optional — for direct paste instead of Connect)", placeholder: "your-mycase-bearer-token", secret: true },
+      { key: "mycase_refresh_token", label: "Refresh Token (optional — pair with Access Token for auto-renewal)", placeholder: "your-mycase-refresh-token", secret: true },
+    ],
+  },
+  {
     id: "ghl",
     label: "GoHighLevel",
     icon: "bi-lightning-fill",
@@ -145,6 +166,18 @@ const LLM_PROVIDERS: ServiceGroup[] = [
       "API key for Mistral AI's cloud LLMs (Mistral Large, etc.). Use a tool-capable model for the agent.",
     fields: [
       { key: "mistral_api_key", label: "API Key", placeholder: "your-mistral-api-key", secret: true },
+    ],
+  },
+  {
+    id: "zai",
+    label: "Z.ai (GLM)",
+    icon: "bi-cpu-fill",
+    color: "#7c3aed",
+    description:
+      "API key for Z.ai's GLM models (GLM-5.2, etc.). Once set, GLM models appear in the model " +
+      "selector on the Podio Agent page. Use a tool-capable model for the agent.",
+    fields: [
+      { key: "zai_api_key", label: "API Key", placeholder: "your-zai-api-key", secret: true },
     ],
   },
 ];

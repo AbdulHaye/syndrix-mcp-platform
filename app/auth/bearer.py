@@ -22,6 +22,7 @@ class TeamIdentity:
     team_name: str
     role: TeamRole
     token: str
+    user_id: str | None = None
 
 
 # Mapping from team-name fragment to role
@@ -59,7 +60,7 @@ def verify_token(token: str) -> TeamIdentity | None:
             role = TeamRole(role_str)
         except ValueError:
             role = TeamRole.DEV
-        return TeamIdentity(team_name=team_name, role=role, token=token)
+        return TeamIdentity(team_name=team_name, role=role, token=token, user_id=payload.get("sub"))
 
     # Fallback: static DEV_TOKENS (dev/testing only)
     settings = get_settings()

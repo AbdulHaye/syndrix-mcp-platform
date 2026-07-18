@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.storage.db import Base
@@ -102,6 +102,61 @@ class User(Base):
 
     def __repr__(self) -> str:
         return f"<User id={self.id} email={self.email!r} role={self.role}>"
+
+
+class PodioChatSession(Base):
+    """A Podio Agent chat conversation, persisted so history survives across
+    browsers/devices instead of living only in the frontend's localStorage.
+
+    ``owner_key`` is ``user:<user_id>`` for real logins (JWT carries the user id)
+    or ``team:<team_name>`` for the DEV_TOKENS fallback (no per-user identity).
+    ``messages`` stores the same shape the frontend already used in localStorage
+    (role/content/steps/error per turn) — no separate messages table.
+    """
+
+    __tablename__ = "podio_chat_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    owner_key: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    team_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False, default="New chat")
+    messages: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<PodioChatSession id={self.id} owner={self.owner_key!r} title={self.title!r}>"
+
+
+class MyCaseChatSession(Base):
+    """A MyCase Agent chat conversation — mirrors PodioChatSession exactly (a
+    separate table, not a shared one, so the two agents' history stays independent
+    and neither migration risks the other's data)."""
+
+    __tablename__ = "mycase_chat_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    owner_key: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    team_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False, default="New chat")
+    messages: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<MyCaseChatSession id={self.id} owner={self.owner_key!r} title={self.title!r}>"
 
 
 class TeamToken(Base):

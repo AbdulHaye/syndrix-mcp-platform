@@ -1,0 +1,6068 @@
+Get Calls
+get
+https://external-integrations.mycase.com/v1/calls
+Get all firm calls viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+number
+A unique identifier for the call.
+
+called_at
+string
+An ISO 8601 timestamp of when the call happened.
+
+caller_phone_number
+string
+The caller's phone number.
+
+call_for
+object
+The staff member that this call is associated with.
+
+id
+integer
+case
+object or null
+The case that this call is associated with.
+
+id
+integer
+lead
+object or null
+The lead that this call is associated with.
+
+id
+integer
+message
+string
+A description of the call.
+
+caller_name
+string or null
+The caller's name. This field is mutually exclusive with the client field.
+
+client
+object or null
+The client that this call is associated with. This field is mutually exclusive with the caller_name field.
+
+id
+integer
+call_type
+string
+One of "incoming" or "outgoing".
+
+resolved
+boolean
+Whether or not this call is resolved.
+
+created_at
+string
+The date the call was created in ISO 8601 date/time format.
+
+updated_at
+string
+The date the call was last updated in ISO 8601 date/time format.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/calls \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "called_at": "string",
+    "caller_phone_number": "string",
+    "call_for": {
+      "id": 0
+    },
+    "case": {
+      "id": 0
+    },
+    "lead": {
+      "id": 0
+    },
+    "message": "string",
+    "caller_name": "string",
+    "client": {
+      "id": 0
+    },
+    "call_type": "string",
+    "resolved": true,
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+
+
+Search MyCase API Documentation...
+Get Case Roles
+get
+https://external-integrations.mycase.com/v1/case_roles
+Get all firm case roles viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+name
+string
+The name of the case role.
+
+created_at
+string
+An ISO 8601 timestamp of when the role was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the role was last updated.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/case_roles \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+Search MyCase API Documentation...
+Get Cases
+get
+https://external-integrations.mycase.com/v1/cases
+Get all firm cases viewable by the authorized user.
+
+Request
+Query Parameters
+field[client]
+array
+A comma separated list of fields to be included on each of the clients in the response.
+
+Example:
+?field[client]=id,first_name,last_name
+field[custom_field]
+array
+A comma separated list of fields to be included on each of the custom fields in the response.
+
+Example:
+?field[custom_field]=id,field_type
+filter[status]
+string
+The ability to filter on case status of "open" or "closed".
+
+Example:
+?filter[status]=closed
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+number
+A unique identifier for the case.
+
+name
+string
+Name of the case.
+
+case_number
+string or null
+The case number of the case.
+
+description
+string
+The description of the case.
+
+opened_date
+string or null
+The date the case was opened in ISO 8601 date format.
+
+closed_date
+string or null
+The date the case was closed in ISO 8601 date format.
+
+sol_date
+string or null
+The statue of limitations date for the case in ISO 8601 date format.
+
+practice_area
+string or null
+The case practice area, as defined in MyCase.
+
+case_stage
+string or null
+The stage the case is currently in, as defined in MyCase.
+
+status
+string
+The status of the case. One of open or closed.
+
+outstanding_balance
+number
+The outstanding balance of this case.
+
+billing_contact
+object
+The billing contact for this case.
+
+id
+integer
+The ID of the client or company assigned as the billing contact for this case.
+
+billing_type
+string
+The billing method for this case. One of "" | "hourly" | "contingency" | "flat" | "mixed" | "pro_bono".
+
+contacts
+any
+deprecated
+[DEPRECATED] This field has been replaced by the clients field for consistency. Please use the clients field instead. Use of both fields will result in an error.
+
+clients
+array[ClientNestedResponse]
+Any clients associated with the case. By default, each resource will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+id
+integer
+first_name
+string
+last_name
+string
+middle_initial
+string
+deprecated
+[DEPRECATED] This field has been replaced by the middle_name field for consistency. Please use the middle_name field instead. Use of both fields will result in an error.
+
+middle_name
+string
+email
+string
+cell_phone_number
+string
+work_phone_number
+string
+home_phone_number
+string
+fax_phone_number
+string
+contact_group
+string
+The client's contact group.
+
+birthdate
+string
+The clients date of birth in ISO-8601 date format.
+
+created_at
+string
+updated_at
+string
+companies
+array[CompanyNestedResponse]
+Any companies associated with the case.
+
+id
+integer
+The ID of the company.
+
+staff
+array[StaffNestedResponse]
+Any firm members associated to the case.
+
+id
+number
+The ID of the staff member.
+
+lead_lawyer
+boolean
+A boolean that lets you know if the staff member associated to this case is the lead lawyer. This field is not required on a case.
+
+originating_lawyer
+boolean
+A boolean that lets you know if the staff member associated to this case is the originating lawyer. This field is not required on a case.
+
+case_rate
+string or null
+The applicable hourly rate for this staff member on this case. The source of this value is indicated by rate_type. May be null when the case is configured to use a rate plan but no matching rate plan is assigned.
+
+rate_type
+string
+Indicates which rate source case_rate was resolved from. "default rate" means the staff member's personal default hourly rate is used. "case rate" means a rate override was configured specifically for this staff member on this case. "rate plan rate" means the rate was looked up from the rate plan assigned to this case, using the staff member's job title (falling back to the rate plan's default rate if no matching title is found).
+
+Allowed values:
+default rate
+case rate
+rate plan rate
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+The value of this custom field.
+
+created_at
+string
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+office
+object
+The office associated to the case.
+
+id
+integer
+The ID of the office.
+
+name
+string
+The name of the office.
+
+fax_phone
+string
+The fax phone number of the office.
+
+main_phone
+string
+The main phone number of the office.
+
+address
+AddressNestedResponse
+updated_at
+string
+The date the office was updated in ISO 8601 date/time format.
+
+created_at
+string
+The date the office was created in ISO 8601 date/time format.
+
+updated_at
+string
+The date the case was updated in ISO 8601 date/time format.
+
+created_at
+string
+The date the case was created in ISO 8601 date/time format.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/cases \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "case_number": "string",
+    "description": "string",
+    "opened_date": "string",
+    "closed_date": "string",
+    "sol_date": "string",
+    "practice_area": "string",
+    "case_stage": "string",
+    "status": "string",
+    "outstanding_balance": 0,
+    "billing_contact": {
+      "id": 0
+    },
+    "billing_type": "string",
+    "contacts": null,
+    "clients": [
+      {
+        "id": 0,
+        "first_name": "string",
+        "last_name": "string",
+        "middle_initial": "string",
+        "middle_name": "string",
+        "email": "string",
+        "cell_phone_number": "string",
+        "work_phone_number": "string",
+        "home_phone_number": "string",
+        "fax_phone_number": "string",
+        "contact_group": "string",
+        "birthdate": "string",
+        "created_at": "string",
+        "updated_at": "string"
+      }
+    ],
+    "companies": [
+      {
+        "id": 0
+      }
+    ],
+    "staff": [
+      {
+        "id": 0,
+        "lead_lawyer": true,
+        "originating_lawyer": true,
+        "case_rate": "string",
+        "rate_type": "default rate"
+      }
+    ],
+    "custom_field_values": [
+      {
+        "custom_field": {
+          "id": 0,
+          "field_type": "string"
+        },
+        "value": "string",
+        "created_at": "string",
+        "updated_at": "string"
+      }
+    ],
+    "office": {
+      "id": 0,
+      "name": "string",
+      "fax_phone": "string",
+      "main_phone": "string",
+      "address": {
+        "address1": "string",
+        "address2": "string",
+        "city": "string",
+        "state": "string",
+        "zip_code": "string",
+        "country": "string"
+      },
+      "updated_at": "string",
+      "created_at": "string"
+    },
+    "updated_at": "string",
+    "created_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+Search MyCase API Documentation...
+Get All Cases for a Client
+get
+https://external-integrations.mycase.com/v1/clients/{id}/cases
+Get all cases associated with a specific client.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the client you want to get cases for.
+
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+number
+A unique identifier for the case.
+
+name
+string
+Name of the case.
+
+case_number
+string or null
+The case number of the case.
+
+description
+string
+The description of the case.
+
+opened_date
+string or null
+The date the case was opened in ISO 8601 date format.
+
+closed_date
+string or null
+The date the case was closed in ISO 8601 date format.
+
+sol_date
+string or null
+The statue of limitations date for the case in ISO 8601 date format.
+
+practice_area
+string or null
+The case practice area, as defined in MyCase.
+
+case_stage
+string or null
+The stage the case is currently in, as defined in MyCase.
+
+status
+string
+The status of the case. One of open or closed.
+
+outstanding_balance
+number
+The outstanding balance of this case.
+
+billing_contact
+object
+The billing contact for this case.
+
+id
+integer
+The ID of the client or company assigned as the billing contact for this case.
+
+billing_type
+string
+The billing method for this case. One of "" | "hourly" | "contingency" | "flat" | "mixed" | "pro_bono".
+
+contacts
+any
+deprecated
+[DEPRECATED] This field has been replaced by the clients field for consistency. Please use the clients field instead. Use of both fields will result in an error.
+
+clients
+array[ClientNestedResponse]
+Any clients associated with the case. By default, each resource will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+id
+integer
+first_name
+string
+last_name
+string
+middle_initial
+string
+deprecated
+[DEPRECATED] This field has been replaced by the middle_name field for consistency. Please use the middle_name field instead. Use of both fields will result in an error.
+
+middle_name
+string
+email
+string
+cell_phone_number
+string
+work_phone_number
+string
+home_phone_number
+string
+fax_phone_number
+string
+contact_group
+string
+The client's contact group.
+
+birthdate
+string
+The clients date of birth in ISO-8601 date format.
+
+created_at
+string
+updated_at
+string
+companies
+array[CompanyNestedResponse]
+Any companies associated with the case.
+
+id
+integer
+The ID of the company.
+
+staff
+array[StaffNestedResponse]
+Any firm members associated to the case.
+
+id
+number
+The ID of the staff member.
+
+lead_lawyer
+boolean
+A boolean that lets you know if the staff member associated to this case is the lead lawyer. This field is not required on a case.
+
+originating_lawyer
+boolean
+A boolean that lets you know if the staff member associated to this case is the originating lawyer. This field is not required on a case.
+
+case_rate
+string or null
+The applicable hourly rate for this staff member on this case. The source of this value is indicated by rate_type. May be null when the case is configured to use a rate plan but no matching rate plan is assigned.
+
+rate_type
+string
+Indicates which rate source case_rate was resolved from. "default rate" means the staff member's personal default hourly rate is used. "case rate" means a rate override was configured specifically for this staff member on this case. "rate plan rate" means the rate was looked up from the rate plan assigned to this case, using the staff member's job title (falling back to the rate plan's default rate if no matching title is found).
+
+Allowed values:
+default rate
+case rate
+rate plan rate
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+The value of this custom field.
+
+created_at
+string
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+office
+object
+The office associated to the case.
+
+id
+integer
+The ID of the office.
+
+name
+string
+The name of the office.
+
+fax_phone
+string
+The fax phone number of the office.
+
+main_phone
+string
+The main phone number of the office.
+
+address
+AddressNestedResponse
+updated_at
+string
+The date the office was updated in ISO 8601 date/time format.
+
+created_at
+string
+The date the office was created in ISO 8601 date/time format.
+
+updated_at
+string
+The date the case was updated in ISO 8601 date/time format.
+
+created_at
+string
+The date the case was created in ISO 8601 date/time format.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/clients/{id}/cases \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "case_number": "string",
+    "description": "string",
+    "opened_date": "string",
+    "closed_date": "string",
+    "sol_date": "string",
+    "practice_area": "string",
+    "case_stage": "string",
+    "status": "string",
+    "outstanding_balance": 0,
+    "billing_contact": {
+      "id": 0
+    },
+    "billing_type": "string",
+    "contacts": null,
+    "clients": [
+      {
+        "id": 0,
+        "first_name": "string",
+        "last_name": "string",
+        "middle_initial": "string",
+        "middle_name": "string",
+        "email": "string",
+        "cell_phone_number": "string",
+        "work_phone_number": "string",
+        "home_phone_number": "string",
+        "fax_phone_number": "string",
+        "contact_group": "string",
+        "birthdate": "string",
+        "created_at": "string",
+        "updated_at": "string"
+      }
+    ],
+    "companies": [
+      {
+        "id": 0
+      }
+    ],
+    "staff": [
+      {
+        "id": 0,
+        "lead_lawyer": true,
+        "originating_lawyer": true,
+        "case_rate": "string",
+        "rate_type": "default rate"
+      }
+    ],
+    "custom_field_values": [
+      {
+        "custom_field": {
+          "id": 0,
+          "field_type": "string"
+        },
+        "value": "string",
+        "created_at": "string",
+        "updated_at": "string"
+      }
+    ],
+    "office": {
+      "id": 0,
+      "name": "string",
+      "fax_phone": "string",
+      "main_phone": "string",
+      "address": {
+        "address1": "string",
+        "address2": "string",
+        "city": "string",
+        "state": "string",
+        "zip_code": "string",
+        "country": "string"
+      },
+      "updated_at": "string",
+      "created_at": "string"
+    },
+    "updated_at": "string",
+    "created_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get an Individual Case
+get
+https://external-integrations.mycase.com/v1/cases/{id}
+Allows you to view a specfic firm case, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the case you want to view or update.
+
+Query Parameters
+field[client]
+array
+A comma separated list of fields to be included on each of the clients in the response.
+
+Example:
+?field[client]=id,first_name,last_name
+field[custom_field]
+array
+A comma separated list of fields to be included on each of the custom fields in the response.
+
+Example:
+?field[custom_field]=id,field_type
+Responses
+200
+OK
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+id
+number
+A unique identifier for the case.
+
+name
+string
+Name of the case.
+
+case_number
+string or null
+The case number of the case.
+
+description
+string
+The description of the case.
+
+opened_date
+string or null
+The date the case was opened in ISO 8601 date format.
+
+closed_date
+string or null
+The date the case was closed in ISO 8601 date format.
+
+sol_date
+string or null
+The statue of limitations date for the case in ISO 8601 date format.
+
+practice_area
+string or null
+The case practice area, as defined in MyCase.
+
+case_stage
+string or null
+The stage the case is currently in, as defined in MyCase.
+
+status
+string
+The status of the case. One of open or closed.
+
+outstanding_balance
+number
+The outstanding balance of this case.
+
+billing_contact
+object
+The billing contact for this case.
+
+id
+integer
+The ID of the client or company assigned as the billing contact for this case.
+
+billing_type
+string
+The billing method for this case. One of "" | "hourly" | "contingency" | "flat" | "mixed" | "pro_bono".
+
+contacts
+any
+deprecated
+[DEPRECATED] This field has been replaced by the clients field for consistency. Please use the clients field instead. Use of both fields will result in an error.
+
+clients
+array[ClientNestedResponse]
+Any clients associated with the case. By default, each resource will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+id
+integer
+first_name
+string
+last_name
+string
+middle_initial
+string
+deprecated
+[DEPRECATED] This field has been replaced by the middle_name field for consistency. Please use the middle_name field instead. Use of both fields will result in an error.
+
+middle_name
+string
+email
+string
+cell_phone_number
+string
+work_phone_number
+string
+home_phone_number
+string
+fax_phone_number
+string
+contact_group
+string
+The client's contact group.
+
+birthdate
+string
+The clients date of birth in ISO-8601 date format.
+
+created_at
+string
+updated_at
+string
+companies
+array[CompanyNestedResponse]
+Any companies associated with the case.
+
+id
+integer
+The ID of the company.
+
+staff
+array[StaffNestedResponse]
+Any firm members associated to the case.
+
+id
+number
+The ID of the staff member.
+
+lead_lawyer
+boolean
+A boolean that lets you know if the staff member associated to this case is the lead lawyer. This field is not required on a case.
+
+originating_lawyer
+boolean
+A boolean that lets you know if the staff member associated to this case is the originating lawyer. This field is not required on a case.
+
+case_rate
+string or null
+The applicable hourly rate for this staff member on this case. The source of this value is indicated by rate_type. May be null when the case is configured to use a rate plan but no matching rate plan is assigned.
+
+rate_type
+string
+Indicates which rate source case_rate was resolved from. "default rate" means the staff member's personal default hourly rate is used. "case rate" means a rate override was configured specifically for this staff member on this case. "rate plan rate" means the rate was looked up from the rate plan assigned to this case, using the staff member's job title (falling back to the rate plan's default rate if no matching title is found).
+
+Allowed values:
+default rate
+case rate
+rate plan rate
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+The value of this custom field.
+
+created_at
+string
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+office
+object
+The office associated to the case.
+
+id
+integer
+The ID of the office.
+
+name
+string
+The name of the office.
+
+fax_phone
+string
+The fax phone number of the office.
+
+main_phone
+string
+The main phone number of the office.
+
+address
+AddressNestedResponse
+updated_at
+string
+The date the office was updated in ISO 8601 date/time format.
+
+created_at
+string
+The date the office was created in ISO 8601 date/time format.
+
+updated_at
+string
+The date the case was updated in ISO 8601 date/time format.
+
+created_at
+string
+The date the case was created in ISO 8601 date/time format.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/cases/{id} \
+  --header 'Accept: application/json'
+{
+  "id": 0,
+  "name": "string",
+  "case_number": "string",
+  "description": "string",
+  "opened_date": "string",
+  "closed_date": "string",
+  "sol_date": "string",
+  "practice_area": "string",
+  "case_stage": "string",
+  "status": "string",
+  "outstanding_balance": 0,
+  "billing_contact": {
+    "id": 0
+  },
+  "billing_type": "string",
+  "contacts": null,
+  "clients": [
+    {
+      "id": 0,
+      "first_name": "string",
+      "last_name": "string",
+      "middle_initial": "string",
+      "middle_name": "string",
+      "email": "string",
+      "cell_phone_number": "string",
+      "work_phone_number": "string",
+      "home_phone_number": "string",
+      "fax_phone_number": "string",
+      "contact_group": "string",
+      "birthdate": "string",
+      "created_at": "string",
+      "updated_at": "string"
+    }
+  ],
+  "companies": [
+    {
+      "id": 0
+    }
+  ],
+  "staff": [
+    {
+      "id": 0,
+      "lead_lawyer": true,
+      "originating_lawyer": true,
+      "case_rate": "string",
+      "rate_type": "default rate"
+    }
+  ],
+  "custom_field_values": [
+    {
+      "custom_field": {
+        "id": 0,
+        "field_type": "string"
+      },
+      "value": "string",
+      "created_at": "string",
+      "updated_at": "string"
+    }
+  ],
+  "office": {
+    "id": 0,
+    "name": "string",
+    "fax_phone": "string",
+    "main_phone": "string",
+    "address": {
+      "address1": "string",
+      "address2": "string",
+      "city": "string",
+      "state": "string",
+      "zip_code": "string",
+      "country": "string"
+    },
+    "updated_at": "string",
+    "created_at": "string"
+  },
+  "updated_at": "string",
+  "created_at": "string"
+}
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Case Stages
+get
+https://external-integrations.mycase.com/v1/case_stages
+Get all firm case stages viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+number
+A unique identifier for the case stage.
+
+name
+string
+The name of the case stage.
+
+created_at
+string
+The date the case stage was created in ISO 8601 date/time format.
+
+updated_at
+string
+The date the case stage was updated in ISO 8601 date/time format.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/case_stages \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Clients (People)
+get
+https://external-integrations.mycase.com/v1/clients
+Get all firm clients (people) viewable by the authorized user.
+
+Request
+Query Parameters
+filter[cell_phone_number]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[cell_phone_number]=760-555-1234
+filter[email]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[email]=lawyer@lawfirm.com
+filter[first_name]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[first_name]=John
+filter[home_phone_number]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[home_phone_number]=760-555-1234
+filter[last_name]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[last_name]=Doe
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+filter[work_phone_number]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[work_phone_number]=760-555-1234
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+The unique ID of the client.
+
+email
+string
+The email of the client.
+
+first_name
+string
+The first name of the client.
+
+middle_initial
+string
+deprecated
+[DEPRECATED] This field has been replaced by the middle_name field for consistency. Please use the middle_name field instead. Use of both fields will result in an error.
+
+middle_name
+string
+The middle name of the client.
+
+last_name
+string
+The last name of the client.
+
+address
+AddressNestedResponse
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+cell_phone_number
+string
+The clients cell phone number.
+
+work_phone_number
+string
+The clients work phone number.
+
+home_phone_number
+string
+The clients home phone number.
+
+fax_phone_number
+string
+The clients fax phone number.
+
+contact_group
+string
+deprecated
+The client's contact group. This has been deprecated. Please use the people_group field instead.
+
+people_group
+object
+The people group associated with this client.
+
+id
+integer
+notes
+string
+Any additional information associated to a particular client. It is seen by other firm members but is not visible to the individual client.
+
+birthdate
+string
+The clients date of birth in ISO-8601 date format.
+
+archived
+boolean
+A True or False to let you know if the client has been archived and is no longer available for use.
+
+cases
+array[CaseNestedResponse]
+Any cases associated with the client, can be one or multiple.
+
+id
+integer
+The ID of the case.
+
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+The value of this custom field.
+
+created_at
+string
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+updated_at
+string
+When the client was last updated.
+
+created_at
+string
+When the client was created.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/clients \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "email": "string",
+    "first_name": "string",
+    "middle_initial": "string",
+    "middle_name": "string",
+    "last_name": "string",
+    "address": {
+      "address1": "string",
+      "address2": "string",
+      "city": "string",
+      "state": "string",
+      "zip_code": "string",
+      "country": "string"
+    },
+    "cell_phone_number": "string",
+    "work_phone_number": "string",
+    "home_phone_number": "string",
+    "fax_phone_number": "string",
+    "contact_group": "string",
+    "people_group": {
+      "id": 0
+    },
+    "notes": "string",
+    "birthdate": "string",
+    "archived": true,
+    "cases": [
+      {
+        "id": 0
+      }
+    ],
+    "custom_field_values": [
+      {
+        "custom_field": {
+          "id": 0,
+          "field_type": "string"
+        },
+        "value": "string",
+        "created_at": "string",
+        "updated_at": "string"
+      }
+    ],
+    "updated_at": "string",
+    "created_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get an Individual Client (Person)
+get
+https://external-integrations.mycase.com/v1/clients/{id}
+Allows you to view a specfic client (person), based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the client (person) you want to view or update.
+
+Responses
+200
+OK
+
+Body
+
+application/json
+
+application/json
+id
+integer
+The unique ID of the client.
+
+email
+string
+The email of the client.
+
+first_name
+string
+The first name of the client.
+
+middle_initial
+string
+deprecated
+[DEPRECATED] This field has been replaced by the middle_name field for consistency. Please use the middle_name field instead. Use of both fields will result in an error.
+
+middle_name
+string
+The middle name of the client.
+
+last_name
+string
+The last name of the client.
+
+address
+AddressNestedResponse
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+cell_phone_number
+string
+The clients cell phone number.
+
+work_phone_number
+string
+The clients work phone number.
+
+home_phone_number
+string
+The clients home phone number.
+
+fax_phone_number
+string
+The clients fax phone number.
+
+contact_group
+string
+deprecated
+The client's contact group. This has been deprecated. Please use the people_group field instead.
+
+people_group
+object
+The people group associated with this client.
+
+id
+integer
+notes
+string
+Any additional information associated to a particular client. It is seen by other firm members but is not visible to the individual client.
+
+birthdate
+string
+The clients date of birth in ISO-8601 date format.
+
+archived
+boolean
+A True or False to let you know if the client has been archived and is no longer available for use.
+
+cases
+array[CaseNestedResponse]
+Any cases associated with the client, can be one or multiple.
+
+id
+integer
+The ID of the case.
+
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+The value of this custom field.
+
+created_at
+string
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+updated_at
+string
+When the client was last updated.
+
+created_at
+string
+When the client was created.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/clients/{id} \
+  --header 'Accept: application/json'
+{
+  "id": 0,
+  "email": "string",
+  "first_name": "string",
+  "middle_initial": "string",
+  "middle_name": "string",
+  "last_name": "string",
+  "address": {
+    "address1": "string",
+    "address2": "string",
+    "city": "string",
+    "state": "string",
+    "zip_code": "string",
+    "country": "string"
+  },
+  "cell_phone_number": "string",
+  "work_phone_number": "string",
+  "home_phone_number": "string",
+  "fax_phone_number": "string",
+  "contact_group": "string",
+  "people_group": {
+    "id": 0
+  },
+  "notes": "string",
+  "birthdate": "string",
+  "archived": true,
+  "cases": [
+    {
+      "id": 0
+    }
+  ],
+  "custom_field_values": [
+    {
+      "custom_field": {
+        "id": 0,
+        "field_type": "string"
+      },
+      "value": "string",
+      "created_at": "string",
+      "updated_at": "string"
+    }
+  ],
+  "updated_at": "string",
+  "created_at": "string"
+}
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Companies
+get
+https://external-integrations.mycase.com/v1/companies
+Get all firm companies viewable by the authorized user.
+
+Request
+Query Parameters
+filter[email]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[email]=lawyer@lawfirm.com
+filter[fax_phone_number]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[fax_phone_number]=760-555-1234
+filter[main_phone_number]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[main_phone_number]=760-555-1234
+filter[name]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[name]=Company
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+name
+string
+email
+string
+website
+string
+main_phone_number
+string
+fax_phone_number
+string
+address
+AddressNestedResponse
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+notes
+string
+cases
+array[object]
+id
+integer
+clients
+array[object]
+id
+integer
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+The value of this custom field.
+
+created_at
+string
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+archived
+boolean
+created_at
+string
+updated_at
+string
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/companies \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "email": "string",
+    "website": "string",
+    "main_phone_number": "string",
+    "fax_phone_number": "string",
+    "address": {
+      "address1": "string",
+      "address2": "string",
+      "city": "string",
+      "state": "string",
+      "zip_code": "string",
+      "country": "string"
+    },
+    "notes": "string",
+    "cases": [
+      {
+        "id": 0
+      }
+    ],
+    "clients": [
+      {
+        "id": 0
+      }
+    ],
+    "custom_field_values": [
+      {
+        "custom_field": {
+          "id": 0,
+          "field_type": "string"
+        },
+        "value": "string",
+        "created_at": "string",
+        "updated_at": "string"
+      }
+    ],
+    "archived": true,
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get an Individual Company
+get
+https://external-integrations.mycase.com/v1/companies/{id}
+Allows you to view a specfic company, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the company you want to view or update.
+
+Responses
+200
+OK
+
+Body
+
+application/json
+
+application/json
+id
+integer
+name
+string
+email
+string
+website
+string
+main_phone_number
+string
+fax_phone_number
+string
+address
+AddressNestedResponse
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+notes
+string
+cases
+array[object]
+id
+integer
+clients
+array[object]
+id
+integer
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+The value of this custom field.
+
+created_at
+string
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+archived
+boolean
+created_at
+string
+updated_at
+string
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/companies/{id} \
+  --header 'Accept: application/json'
+{
+  "id": 0,
+  "name": "string",
+  "email": "string",
+  "website": "string",
+  "main_phone_number": "string",
+  "fax_phone_number": "string",
+  "address": {
+    "address1": "string",
+    "address2": "string",
+    "city": "string",
+    "state": "string",
+    "zip_code": "string",
+    "country": "string"
+  },
+  "notes": "string",
+  "cases": [
+    {
+      "id": 0
+    }
+  ],
+  "clients": [
+    {
+      "id": 0
+    }
+  ],
+  "custom_field_values": [
+    {
+      "custom_field": {
+        "id": 0,
+        "field_type": "string"
+      },
+      "value": "string",
+      "created_at": "string",
+      "updated_at": "string"
+    }
+  ],
+  "archived": true,
+  "created_at": "string",
+  "updated_at": "string"
+}
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Custom Fields
+get
+https://external-integrations.mycase.com/v1/custom_fields
+Get all firm custom fields viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+A unique identifier for the Custom Field.
+
+name
+string
+The name of the Custom Field.
+
+parent_type
+string
+The parent resource type of the Custom Field. One of case | client | company | expense | time | time_and_expense.
+
+field_type
+string
+The field type of the Custom Field. One of short_text | long_text | numeric | boolean | date | list | currency.
+
+list_options
+array[object]
+If field_type is specified as list, this field will be returned with an array of list options.
+
+key
+string
+The unique key identifier for this list option.
+
+option
+string
+The name of this list option.
+
+created_at
+string
+An ISO 8601 timestamp of when the list option was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the list option was last updated.
+
+created_at
+string
+An ISO 8601 timestamp of when the Custom Field was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the Custom Field was last updated.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/custom_fields \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "parent_type": "string",
+    "field_type": "string",
+    "list_options": [
+      {
+        "key": "string",
+        "option": "string",
+        "created_at": "string",
+        "updated_at": "string"
+      }
+    ],
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get an Individual Custom Field
+get
+https://external-integrations.mycase.com/v1/custom_fields/{id}
+Allows you to view a specfic custom field, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the custom field you want to view or update.
+
+Responses
+200
+OK
+
+Body
+
+application/json
+
+application/json
+id
+integer
+A unique identifier for the Custom Field.
+
+name
+string
+The name of the Custom Field.
+
+parent_type
+string
+The parent resource type of the Custom Field. One of case | client | company | expense | time | time_and_expense.
+
+field_type
+string
+The field type of the Custom Field. One of short_text | long_text | numeric | boolean | date | list | currency.
+
+list_options
+array[object]
+If field_type is specified as list, this field will be returned with an array of list options.
+
+key
+string
+The unique key identifier for this list option.
+
+option
+string
+The name of this list option.
+
+created_at
+string
+An ISO 8601 timestamp of when the list option was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the list option was last updated.
+
+created_at
+string
+An ISO 8601 timestamp of when the Custom Field was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the Custom Field was last updated.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/custom_fields/{id} \
+  --header 'Accept: application/json'
+{
+  "id": 0,
+  "name": "string",
+  "parent_type": "string",
+  "field_type": "string",
+  "list_options": [
+    {
+      "key": "string",
+      "option": "string",
+      "created_at": "string",
+      "updated_at": "string"
+    }
+  ],
+  "created_at": "string",
+  "updated_at": "string"
+}
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get the List Options for a Custom Field
+get
+https://external-integrations.mycase.com/v1/custom_fields/{id}/list_options
+Allows you to view a specfic custom field's list options, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the custom field you want to view or update.
+
+Responses
+200
+OK
+
+Body
+
+application/json
+
+application/json
+array of:
+key
+string
+The unique key identifier for this list option.
+
+option
+string
+The name of this list option.
+
+created_at
+string
+An ISO 8601 timestamp of when the list option was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the list option was last updated.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/custom_fields/{id}/list_options \
+  --header 'Accept: application/json'
+[
+  {
+    "key": "string",
+    "option": "string",
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Documents
+get
+https://external-integrations.mycase.com/v1/documents
+Get all firm documents viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+name
+string
+The name of the document as seen in MyCase.
+
+filename
+string
+The name of the physical file associated with this document.
+
+path
+string
+The folder structure of where this document is located in MyCase.
+
+description
+string
+assigned_date
+string
+case
+CaseNestedResponse or null
+id
+integer
+The ID of the case.
+
+created_at
+string
+updated_at
+string
+self_url
+string
+The url that can be used to view this document specifically.
+
+Example:
+/v1/documents/1
+folder
+FolderNestedResponse
+id
+number
+The ID of the parent folder.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/documents \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "filename": "string",
+    "path": "string",
+    "description": "string",
+    "assigned_date": "string",
+    "case": {
+      "id": 0
+    },
+    "created_at": "string",
+    "updated_at": "string",
+    "self_url": "/v1/documents/1",
+    "folder": {
+      "id": 0
+    }
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get All Documents for a Case
+get
+https://external-integrations.mycase.com/v1/cases/{id}/documents
+Get all documents associated with a specific case.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the case you want to get / add documents from / to.
+
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+name
+string
+The name of the document as seen in MyCase.
+
+filename
+string
+The name of the physical file associated with this document.
+
+path
+string
+The folder structure of where this document is located in MyCase.
+
+description
+string
+assigned_date
+string
+case
+CaseNestedResponse or null
+id
+integer
+The ID of the case.
+
+created_at
+string
+updated_at
+string
+self_url
+string
+The url that can be used to view this document specifically.
+
+Example:
+/v1/documents/1
+folder
+FolderNestedResponse
+id
+number
+The ID of the parent folder.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/cases/{id}/documents \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "filename": "string",
+    "path": "string",
+    "description": "string",
+    "assigned_date": "string",
+    "case": {
+      "id": 0
+    },
+    "created_at": "string",
+    "updated_at": "string",
+    "self_url": "/v1/documents/1",
+    "folder": {
+      "id": 0
+    }
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get all Firm Document Versions
+get
+https://external-integrations.mycase.com/v1/document_versions
+Get all firm document versions viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+version
+number
+The version number of this DocumentVersion as it relates to the associated parent Document
+
+document
+object
+The parent Document that this DocumentVersion is associated with
+
+id
+number
+self_url
+string
+The url that this DocumentVersion is accessible from
+
+Example:
+/v1/documents/1/versions/2
+created_at
+string
+updated_at
+string
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/document_versions \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "version": 0,
+    "document": {
+      "id": 0
+    },
+    "self_url": "/v1/documents/1/versions/2",
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get an Individual Document
+get
+https://external-integrations.mycase.com/v1/documents/{id}
+Allows you to view a specfic document, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the document you want to view or update.
+
+Responses
+200
+OK
+
+Body
+
+application/json
+
+application/json
+id
+integer
+name
+string
+The name of the document as seen in MyCase.
+
+filename
+string
+The name of the physical file associated with this document.
+
+path
+string
+The folder structure of where this document is located in MyCase.
+
+description
+string
+assigned_date
+string
+case
+CaseNestedResponse or null
+id
+integer
+The ID of the case.
+
+created_at
+string
+updated_at
+string
+self_url
+string
+The url that can be used to view this document specifically.
+
+Example:
+/v1/documents/1
+folder
+FolderNestedResponse
+id
+number
+The ID of the parent folder.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/documents/{id} \
+  --header 'Accept: application/json'
+{
+  "id": 0,
+  "name": "string",
+  "filename": "string",
+  "path": "string",
+  "description": "string",
+  "assigned_date": "string",
+  "case": {
+    "id": 0
+  },
+  "created_at": "string",
+  "updated_at": "string",
+  "self_url": "/v1/documents/1",
+  "folder": {
+    "id": 0
+  }
+}
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get All Versions of a Document
+get
+https://external-integrations.mycase.com/v1/documents/{id}/versions
+Get all versions associated with a specific document.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the document you want to get / add versions from / to.
+
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+version
+number
+The version number of this DocumentVersion as it relates to the associated parent Document
+
+document
+object
+The parent Document that this DocumentVersion is associated with
+
+id
+number
+self_url
+string
+The url that this DocumentVersion is accessible from
+
+Example:
+/v1/documents/1/versions/2
+created_at
+string
+updated_at
+string
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/documents/{id}/versions \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "version": 0,
+    "document": {
+      "id": 0
+    },
+    "self_url": "/v1/documents/1/versions/2",
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Download a Document
+get
+https://external-integrations.mycase.com/v1/documents/{id}/data
+Download a specific document.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the document to download
+
+Responses
+302
+Found
+
+Headers
+Location
+string
+Temporary URL to download document data (valid for 1 minute)
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/documents/{id}/data
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+Search MyCase API Documentation...
+Download a Document Version
+get
+https://external-integrations.mycase.com/v1/documents/{id}/versions/{version_number}/data
+Download a specific document version.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the document to download a version of.
+
+version_number
+string
+required
+The number of the specific version of this document to download.
+
+Responses
+302
+Found
+
+Headers
+Location
+string
+Temporary URL to download document data (valid for 1 hour)
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/documents/{id}/versions/{version_number}/data
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+Search MyCase API Documentation...
+Get Events
+get
+https://external-integrations.mycase.com/v1/events
+Get all firm events viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+name
+string
+The name of this event.
+
+description
+string
+start
+string
+The start date/time of this event in ISO 8601 date format.
+
+end
+string
+The end date/time of this event in ISO 8601 date format.
+
+all_day
+boolean
+Whether or not this is an all day event.
+
+private
+boolean
+Whether or not this is a private event.
+
+event_type
+string
+The type of this event.
+
+location
+object
+The location associated with this event, if there is one.
+
+id
+number
+case
+object
+The case associated with this event, if there is one.
+
+id
+integer
+staff
+array[object]
+All staff associated with this event.
+
+id
+integer
+created_at
+string
+updated_at
+string
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/events \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "description": "string",
+    "start": "string",
+    "end": "string",
+    "all_day": true,
+    "private": true,
+    "event_type": "string",
+    "location": {
+      "id": 0
+    },
+    "case": {
+      "id": 0
+    },
+    "staff": [
+      {
+        "id": 0
+      }
+    ],
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Expenses
+get
+https://external-integrations.mycase.com/v1/expenses
+Get all firm expenses viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+activity_name
+string
+The activity name associated with this expense.
+
+description
+string
+billable
+boolean
+Whether or not this expense is billable.
+
+entry_date
+string
+The entry date of this expense in ISO 8601 date format.
+
+cost
+string
+units
+string
+case
+object
+id
+integer
+staff
+object
+id
+integer
+invoices
+array[object]
+id
+integer
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+The value of this custom field.
+
+created_at
+string
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+created_at
+string
+updated_at
+string
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/expenses \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "activity_name": "string",
+    "description": "string",
+    "billable": true,
+    "entry_date": "string",
+    "cost": "string",
+    "units": "string",
+    "case": {
+      "id": 0
+    },
+    "staff": {
+      "id": 0
+    },
+    "invoices": [
+      {
+        "id": 0
+      }
+    ],
+    "custom_field_values": [
+      {
+        "custom_field": {
+          "id": 0,
+          "field_type": "string"
+        },
+        "value": "string",
+        "created_at": "string",
+        "updated_at": "string"
+      }
+    ],
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+Search MyCase API Documentation...
+Get an Individual Expense
+get
+https://external-integrations.mycase.com/v1/expenses/{id}
+Allows you to view a specfic expense, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the expense you want to view or update.
+
+Responses
+200
+OK
+
+Body
+
+application/json
+
+application/json
+id
+integer
+activity_name
+string
+The activity name associated with this expense.
+
+description
+string
+billable
+boolean
+Whether or not this expense is billable.
+
+entry_date
+string
+The entry date of this expense in ISO 8601 date format.
+
+cost
+string
+units
+string
+case
+object
+id
+integer
+staff
+object
+id
+integer
+invoices
+array[object]
+id
+integer
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+The value of this custom field.
+
+created_at
+string
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+created_at
+string
+updated_at
+string
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/expenses/{id} \
+  --header 'Accept: application/json'
+{
+  "id": 0,
+  "activity_name": "string",
+  "description": "string",
+  "billable": true,
+  "entry_date": "string",
+  "cost": "string",
+  "units": "string",
+  "case": {
+    "id": 0
+  },
+  "staff": {
+    "id": 0
+  },
+  "invoices": [
+    {
+      "id": 0
+    }
+  ],
+  "custom_field_values": [
+    {
+      "custom_field": {
+        "id": 0,
+        "field_type": "string"
+      },
+      "value": "string",
+      "created_at": "string",
+      "updated_at": "string"
+    }
+  ],
+  "created_at": "string",
+  "updated_at": "string"
+}
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+Search MyCase API Documentation...
+Get the Firm of the Current Authorized User
+get
+https://external-integrations.mycase.com/v1/firm
+Allows you to view the firm of the current authorized user.
+
+Responses
+200
+OK
+
+Body
+
+application/json
+
+application/json
+name
+string
+The name of the firm.
+
+url
+string
+The firms MyCase url. This can be used as a unique identifier for the firm.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/firm \
+  --header 'Accept: application/json'
+{
+  "name": "string",
+  "url": "string"
+}
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Documents of a Folder
+get
+https://external-integrations.mycase.com/v1/folders/{id}/documents
+Get the first level of Documents for this Folder
+
+Request
+Path Parameters
+id
+string
+required
+The id of the folder you want to get / add documents from / to.
+
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+name
+string
+The name of the document as seen in MyCase.
+
+filename
+string
+The name of the physical file associated with this document.
+
+path
+string
+The folder structure of where this document is located in MyCase.
+
+description
+string
+assigned_date
+string
+case
+CaseNestedResponse or null
+id
+integer
+The ID of the case.
+
+created_at
+string
+updated_at
+string
+self_url
+string
+The url that can be used to view this document specifically.
+
+Example:
+/v1/documents/1
+folder
+FolderNestedResponse
+id
+number
+The ID of the parent folder.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/folders/{id}/documents \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "filename": "string",
+    "path": "string",
+    "description": "string",
+    "assigned_date": "string",
+    "case": {
+      "id": 0
+    },
+    "created_at": "string",
+    "updated_at": "string",
+    "self_url": "/v1/documents/1",
+    "folder": {
+      "id": 0
+    }
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Subfolders of a Folder
+get
+https://external-integrations.mycase.com/v1/folders/{id}/subfolders
+Get the first level of Subfolders for this Folder
+
+Request
+Path Parameters
+id
+string
+required
+The id of the folder you want to get subfolders of.
+
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+name
+string
+The name of the folder.
+
+created_at
+string
+updated_at
+string
+self_url
+string
+The url that can be used to view this folder specifically.
+
+Example:
+/v1/folders/1
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/folders/{id}/subfolders \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "created_at": "string",
+    "updated_at": "string",
+    "self_url": "/v1/folders/1"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Case Documents Folder
+get
+https://external-integrations.mycase.com/v1/cases/{id}/folder
+Get the folder for a case that contains all of the associated case documents and subfolders.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the case you want the document folder for.
+
+Responses
+200
+OK
+
+Body
+
+application/json
+
+application/json
+id
+integer
+name
+string
+The name of the folder.
+
+created_at
+string
+updated_at
+string
+self_url
+string
+The url that can be used to view this folder specifically.
+
+Example:
+/v1/folders/1
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/cases/{id}/folder \
+  --header 'Accept: application/json'
+{
+  "id": 0,
+  "name": "string",
+  "created_at": "string",
+  "updated_at": "string",
+  "self_url": "/v1/folders/1"
+}
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Invoices
+get
+https://external-integrations.mycase.com/v1/invoices
+Get firm invoices viewable by the authorized user. By default, only invoices with "Online Payments Enabled" will be returned.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+only_allowed_online_payments
+boolean
+Whether or not to exclude invoices that do not allow online payments. Default is true.
+
+Default:
+true
+Example:
+?only_allowed_online_payments=true
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+invoice_date
+string
+The invoiced date in ISO 8601 date format.
+
+invoice_number
+string
+The invoiced number in string format.
+
+due_date
+string
+The due date for the invoice in ISO 8601 date format.
+
+total_amount
+number
+The total amount due on the invoice.
+
+paid_amount
+number
+The total amount already paid on the invoice.
+
+case
+object
+id
+integer
+bank_account
+object
+The bank account associated with this invoice.
+
+name
+string
+Example:
+Trust Account
+account_type
+string
+Example:
+trust
+view_url
+string
+A URL where the client can view this invoice.
+
+allow_online_payments
+boolean
+Whether or not online payments are allowed for this invoice.
+
+status
+string
+The status of this invoice. One of overdue | paid | partial | draft | unsent | sent | forwarded.
+
+created_at
+string
+updated_at
+string
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/invoices \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "invoice_date": "string",
+    "invoice_number": "string",
+    "due_date": "string",
+    "total_amount": 0,
+    "paid_amount": 0,
+    "case": {
+      "id": 0
+    },
+    "bank_account": {
+      "name": "Trust Account",
+      "account_type": "trust"
+    },
+    "view_url": "string",
+    "allow_online_payments": true,
+    "status": "string",
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Invoice Payments
+get
+https://external-integrations.mycase.com/v1/invoice_payments
+Get all firm invoice payments viewable by the authorized user.
+
+Request
+Query Parameters
+filter[payable_id]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[payable_id]=12345
+filter[status]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[status]=success
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+amount
+number
+The amount of the payment.
+
+notes
+string
+The notes associated with this payment.
+
+date
+string or null
+The date recorded for the payment in ISO 8601 date format.
+
+invoice
+object
+The invoice that this payment is associated with.
+
+id
+integer
+status
+string
+The status of the payment. One of pending | success | failure | error | timeout.
+
+transaction_type
+string or null
+The type of transaction that this payment is associated with.
+
+case
+CaseNestedResponse or null
+id
+integer
+The ID of the case.
+
+account_name
+string or null
+The name of the account that this payment is associated with.
+
+attorney
+object or null
+The attorney who created the invoices associated with this payment.
+
+id
+integer
+client
+object or null
+The payer of the invoices associated with this payment.
+
+id
+integer
+invoice_number
+string
+The invoice number that this payment is associated with.
+
+created_at
+string
+The date the invoice payment was created in ISO 8601 date/time format.
+
+updated_at
+string
+The date the invoice payment was updated in ISO 8601 date/time format.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/invoice_payments \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "amount": 0,
+    "notes": "string",
+    "date": "string",
+    "invoice": {
+      "id": 0
+    },
+    "status": "string",
+    "transaction_type": "string",
+    "case": {
+      "id": 0
+    },
+    "account_name": "string",
+    "attorney": {
+      "id": 0
+    },
+    "client": {
+      "id": 0
+    },
+    "invoice_number": "string",
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Leads
+get
+https://external-integrations.mycase.com/v1/leads
+Get all firm leads viewable by the authorized user.
+
+Request
+Query Parameters
+filter[cell_phone_number]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[cell_phone_number]=760-555-1234
+filter[email]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[email]=lawyer@lawfirm.com
+filter[first_name]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[first_name]=John
+filter[home_phone_number]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[home_phone_number]=760-555-1234
+filter[last_name]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[last_name]=Doe
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+filter[work_phone_number]
+string
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[work_phone_number]=760-555-1234
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+The unique ID of the lead.
+
+email
+string
+The email of the lead.
+
+first_name
+string
+The first name of the lead.
+
+middle_initial
+string
+The middle name (or initial) of the lead.
+
+last_name
+string
+The last name of the lead.
+
+address
+AddressNestedResponse
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+cell_phone_number
+string
+The leads cell phone number.
+
+work_phone_number
+string
+The leads work phone number.
+
+home_phone_number
+string
+The leads home phone number.
+
+lead_details
+string
+Any additional information associated to a particular lead. It is seen by other firm members but is not visible to the individual lead.
+
+birthdate
+string
+The leads date of birth in ISO-8601 date format.
+
+drivers_license_number
+string
+The leads drivers license number.
+
+drivers_license_state
+string
+The leads drivers license state.
+
+status
+string
+The current status of the lead.
+
+approved
+boolean
+Whether or not this lead is approved.
+
+referral_source
+string
+deprecated
+Deprecated. Please use the referral_source_reference field instead.
+
+referral_source_reference
+object
+The referral source associated with this lead.
+
+id
+integer
+referred_by
+object
+If the lead was referred by another client or company in the system you would use this object.
+
+id
+integer
+The ID of the existing client or company in mycase.
+
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+The value of this custom field.
+
+created_at
+string
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+updated_at
+string
+When the lead was last updated.
+
+created_at
+string
+When the lead was created.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/leads \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "email": "string",
+    "first_name": "string",
+    "middle_initial": "string",
+    "last_name": "string",
+    "address": {
+      "address1": "string",
+      "address2": "string",
+      "city": "string",
+      "state": "string",
+      "zip_code": "string",
+      "country": "string"
+    },
+    "cell_phone_number": "string",
+    "work_phone_number": "string",
+    "home_phone_number": "string",
+    "lead_details": "string",
+    "birthdate": "string",
+    "drivers_license_number": "string",
+    "drivers_license_state": "string",
+    "status": "string",
+    "approved": true,
+    "referral_source": "string",
+    "referral_source_reference": {
+      "id": 0
+    },
+    "referred_by": {
+      "id": 0
+    },
+    "custom_field_values": [
+      {
+        "custom_field": {
+          "id": 0,
+          "field_type": "string"
+        },
+        "value": "string",
+        "created_at": "string",
+        "updated_at": "string"
+      }
+    ],
+    "updated_at": "string",
+    "created_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get an Individual Lead
+get
+https://external-integrations.mycase.com/v1/leads/{id}
+Allows you to view a specfic lead, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the lead you want to view or update.
+
+Responses
+200
+OK
+
+Body
+
+application/json
+
+application/json
+id
+integer
+The unique ID of the lead.
+
+email
+string
+The email of the lead.
+
+first_name
+string
+The first name of the lead.
+
+middle_initial
+string
+The middle name (or initial) of the lead.
+
+last_name
+string
+The last name of the lead.
+
+address
+AddressNestedResponse
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+cell_phone_number
+string
+The leads cell phone number.
+
+work_phone_number
+string
+The leads work phone number.
+
+home_phone_number
+string
+The leads home phone number.
+
+lead_details
+string
+Any additional information associated to a particular lead. It is seen by other firm members but is not visible to the individual lead.
+
+birthdate
+string
+The leads date of birth in ISO-8601 date format.
+
+drivers_license_number
+string
+The leads drivers license number.
+
+drivers_license_state
+string
+The leads drivers license state.
+
+status
+string
+The current status of the lead.
+
+approved
+boolean
+Whether or not this lead is approved.
+
+referral_source
+string
+deprecated
+Deprecated. Please use the referral_source_reference field instead.
+
+referral_source_reference
+object
+The referral source associated with this lead.
+
+id
+integer
+referred_by
+object
+If the lead was referred by another client or company in the system you would use this object.
+
+id
+integer
+The ID of the existing client or company in mycase.
+
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+The value of this custom field.
+
+created_at
+string
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+updated_at
+string
+When the lead was last updated.
+
+created_at
+string
+When the lead was created.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/leads/{id} \
+  --header 'Accept: application/json'
+{
+  "id": 0,
+  "email": "string",
+  "first_name": "string",
+  "middle_initial": "string",
+  "last_name": "string",
+  "address": {
+    "address1": "string",
+    "address2": "string",
+    "city": "string",
+    "state": "string",
+    "zip_code": "string",
+    "country": "string"
+  },
+  "cell_phone_number": "string",
+  "work_phone_number": "string",
+  "home_phone_number": "string",
+  "lead_details": "string",
+  "birthdate": "string",
+  "drivers_license_number": "string",
+  "drivers_license_state": "string",
+  "status": "string",
+  "approved": true,
+  "referral_source": "string",
+  "referral_source_reference": {
+    "id": 0
+  },
+  "referred_by": {
+    "id": 0
+  },
+  "custom_field_values": [
+    {
+      "custom_field": {
+        "id": 0,
+        "field_type": "string"
+      },
+      "value": "string",
+      "created_at": "string",
+      "updated_at": "string"
+    }
+  ],
+  "updated_at": "string",
+  "created_at": "string"
+}
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Locations
+get
+https://external-integrations.mycase.com/v1/locations
+Get all firm locations viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+number
+A unique identifier for the location.
+
+name
+string
+The name of the location.
+
+address
+AddressNestedResponse
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+created_at
+string
+The date the location was created in ISO 8601 date/time format.
+
+updated_at
+string
+The date the location was updated in ISO 8601 date/time format.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/locations \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "address": {
+      "address1": "string",
+      "address2": "string",
+      "city": "string",
+      "state": "string",
+      "zip_code": "string",
+      "country": "string"
+    },
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+
+Search MyCase API Documentation...
+Get All Message Threads for a Client
+get
+https://external-integrations.mycase.com/v1/clients/{id}/message_threads
+Get all message threads associated with a specific client.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the client you want to get message threads for.
+
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+number
+A unique identifier for the message thread.
+
+subject
+string
+The subject of the message thread.
+
+first_message_body
+string
+The body text of the first message in the thread.
+
+sender
+object
+The sender of the first message in this message thread.
+
+id
+integer
+case
+object or null
+The case associated with this message thread, if there is one.
+
+id
+number
+clients
+array[object]
+Any clients associated with this message thread.
+
+id
+integer
+The ID of the client.
+
+staff
+array[object]
+Any staff associated with this message thread.
+
+id
+integer
+The ID of the staff.
+
+created_at
+string
+The date the message thread was created in ISO 8601 date/time format.
+
+updated_at
+string
+The date the message thread was updated in ISO 8601 date/time format.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/clients/{id}/message_threads \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "subject": "string",
+    "first_message_body": "string",
+    "sender": {
+      "id": 0
+    },
+    "case": {
+      "id": 0
+    },
+    "clients": [
+      {
+        "id": 0
+      }
+    ],
+    "staff": [
+      {
+        "id": 0
+      }
+    ],
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get an Individual Note
+get
+https://external-integrations.mycase.com/v1/notes/{id}
+Allows you to view a specfic note, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the note you want to view or update.
+
+Responses
+200
+OK
+
+Body
+
+application/json
+
+application/json
+id
+number
+A unique identifier for the note.
+
+subject
+string
+Subject of the note.
+
+note
+string
+The body text of the note.
+
+archived
+boolean
+Whether or not the note is archived.
+
+date
+string or null
+The date of the note.
+
+client
+object or null
+The client associated with this note, if there is one.
+
+id
+number
+company
+object or null
+The company associated with this note, if there is one.
+
+id
+number
+case
+object or null
+The case associated with this note, if there is one.
+
+id
+number
+created_by
+object
+The staff member who created this note.
+
+id
+number
+updated_by
+object
+The staff member who updated this note.
+
+id
+number
+created_at
+string
+The date the note was created in ISO 8601 date/time format.
+
+updated_at
+string
+The date the note was updated in ISO 8601 date/time format.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/notes/{id} \
+  --header 'Accept: application/json'
+{
+  "id": 0,
+  "subject": "string",
+  "note": "string",
+  "archived": true,
+  "date": "string",
+  "client": {
+    "id": 0
+  },
+  "company": {
+    "id": 0
+  },
+  "case": {
+    "id": 0
+  },
+  "created_by": {
+    "id": 0
+  },
+  "updated_by": {
+    "id": 0
+  },
+  "created_at": "string",
+  "updated_at": "string"
+}
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get All Notes for a Case
+get
+https://external-integrations.mycase.com/v1/cases/{id}/notes
+Get all notes associated with a specific case.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the case you want to get or create notes for.
+
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+number
+A unique identifier for the note.
+
+subject
+string
+Subject of the note.
+
+note
+string
+The body text of the note.
+
+archived
+boolean
+Whether or not the note is archived.
+
+date
+string or null
+The date of the note.
+
+client
+object or null
+The client associated with this note, if there is one.
+
+id
+number
+company
+object or null
+The company associated with this note, if there is one.
+
+id
+number
+case
+object or null
+The case associated with this note, if there is one.
+
+id
+number
+created_by
+object
+The staff member who created this note.
+
+id
+number
+updated_by
+object
+The staff member who updated this note.
+
+id
+number
+created_at
+string
+The date the note was created in ISO 8601 date/time format.
+
+updated_at
+string
+The date the note was updated in ISO 8601 date/time format.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/cases/{id}/notes \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "subject": "string",
+    "note": "string",
+    "archived": true,
+    "date": "string",
+    "client": {
+      "id": 0
+    },
+    "company": {
+      "id": 0
+    },
+    "case": {
+      "id": 0
+    },
+    "created_by": {
+      "id": 0
+    },
+    "updated_by": {
+      "id": 0
+    },
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get All Notes for a Client
+get
+https://external-integrations.mycase.com/v1/clients/{id}/notes
+Get all notes associated with a specific client.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the client you want to get or create notes for.
+
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+number
+A unique identifier for the note.
+
+subject
+string
+Subject of the note.
+
+note
+string
+The body text of the note.
+
+archived
+boolean
+Whether or not the note is archived.
+
+date
+string or null
+The date of the note.
+
+client
+object or null
+The client associated with this note, if there is one.
+
+id
+number
+company
+object or null
+The company associated with this note, if there is one.
+
+id
+number
+case
+object or null
+The case associated with this note, if there is one.
+
+id
+number
+created_by
+object
+The staff member who created this note.
+
+id
+number
+updated_by
+object
+The staff member who updated this note.
+
+id
+number
+created_at
+string
+The date the note was created in ISO 8601 date/time format.
+
+updated_at
+string
+The date the note was updated in ISO 8601 date/time format.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/clients/{id}/notes \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "subject": "string",
+    "note": "string",
+    "archived": true,
+    "date": "string",
+    "client": {
+      "id": 0
+    },
+    "company": {
+      "id": 0
+    },
+    "case": {
+      "id": 0
+    },
+    "created_by": {
+      "id": 0
+    },
+    "updated_by": {
+      "id": 0
+    },
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get People Groups
+get
+https://external-integrations.mycase.com/v1/people_groups
+Get all firm people groups viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+number
+A unique identifier for the people group.
+
+name
+string
+The name of the people group.
+
+created_at
+string
+The date the people group was created in ISO 8601 date/time format.
+
+updated_at
+string
+The date the people group was updated in ISO 8601 date/time format.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/people_groups \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Practice Areas
+get
+https://external-integrations.mycase.com/v1/practice_areas
+Get all firm practice areas viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+number
+A unique identifier for the practice area.
+
+name
+string
+The name of the practice area.
+
+created_at
+string
+The date the practice area was created in ISO 8601 date/time format.
+
+updated_at
+string
+The date the practice area was updated in ISO 8601 date/time format.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/practice_areas \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Referral Sources
+get
+https://external-integrations.mycase.com/v1/referral_sources
+Get all firm referral sources viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+number
+A unique identifier for this resource.
+
+name
+string
+The name of the referral source.
+
+created_at
+string
+The date this resource was created in ISO 8601 date/time format.
+
+updated_at
+string
+The date this resource was updated in ISO 8601 date/time format.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/referral_sources \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get all Staff
+get
+https://external-integrations.mycase.com/v1/staff
+Get all firm staff viewable by the authorized user.
+
+Request
+Query Parameters
+filter[status]
+string
+One of either 'active' or 'inactive'. Will then only return firm members with the status specified.
+
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+The unique ID of the staff.
+
+email
+string
+The email of the staff.
+
+first_name
+string
+The first name of the staff.
+
+middle_initial
+string
+The middle name (or initial) of the staff.
+
+last_name
+string
+The last name of the staff.
+
+address
+AddressNestedResponse
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+cell_phone_number
+string
+The staff's cell phone number.
+
+work_phone_number
+string
+The staff's work phone number.
+
+home_phone_number
+string
+The staff's home phone number.
+
+type
+string
+The type of the staff.
+
+title
+string
+The title of the staff.
+
+active
+boolean
+Whether or not this staff is currently active.
+
+default_hourly_rate
+number
+This staff member's default billing rate.
+
+updated_at
+string
+When the staff was last updated.
+
+created_at
+string
+When the staff was created.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/staff \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "email": "string",
+    "first_name": "string",
+    "middle_initial": "string",
+    "last_name": "string",
+    "address": {
+      "address1": "string",
+      "address2": "string",
+      "city": "string",
+      "state": "string",
+      "zip_code": "string",
+      "country": "string"
+    },
+    "cell_phone_number": "string",
+    "work_phone_number": "string",
+    "home_phone_number": "string",
+    "type": "string",
+    "title": "string",
+    "active": true,
+    "default_hourly_rate": 0,
+    "updated_at": "string",
+    "created_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get an Individual Staff
+get
+https://external-integrations.mycase.com/v1/staff/{id}
+Allows you to view a specfic staff member, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the lead you want to view or update.
+
+Responses
+200
+OK
+
+Body
+
+application/json
+
+application/json
+id
+integer
+The unique ID of the staff.
+
+email
+string
+The email of the staff.
+
+first_name
+string
+The first name of the staff.
+
+middle_initial
+string
+The middle name (or initial) of the staff.
+
+last_name
+string
+The last name of the staff.
+
+address
+AddressNestedResponse
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+cell_phone_number
+string
+The staff's cell phone number.
+
+work_phone_number
+string
+The staff's work phone number.
+
+home_phone_number
+string
+The staff's home phone number.
+
+type
+string
+The type of the staff.
+
+title
+string
+The title of the staff.
+
+active
+boolean
+Whether or not this staff is currently active.
+
+default_hourly_rate
+number
+This staff member's default billing rate.
+
+updated_at
+string
+When the staff was last updated.
+
+created_at
+string
+When the staff was created.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/staff/{id} \
+  --header 'Accept: application/json'
+{
+  "id": 0,
+  "email": "string",
+  "first_name": "string",
+  "middle_initial": "string",
+  "last_name": "string",
+  "address": {
+    "address1": "string",
+    "address2": "string",
+    "city": "string",
+    "state": "string",
+    "zip_code": "string",
+    "country": "string"
+  },
+  "cell_phone_number": "string",
+  "work_phone_number": "string",
+  "home_phone_number": "string",
+  "type": "string",
+  "title": "string",
+  "active": true,
+  "default_hourly_rate": 0,
+  "updated_at": "string",
+  "created_at": "string"
+}
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get the Current Authorized User
+get
+https://external-integrations.mycase.com/v1/me
+Allows you to view the current authorized user.
+
+Responses
+200
+OK
+
+Body
+
+application/json
+
+application/json
+id
+integer
+The unique ID of the staff.
+
+email
+string
+The email of the staff.
+
+first_name
+string
+The first name of the staff.
+
+middle_initial
+string
+The middle name (or initial) of the staff.
+
+last_name
+string
+The last name of the staff.
+
+address
+AddressNestedResponse
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+cell_phone_number
+string
+The staff's cell phone number.
+
+work_phone_number
+string
+The staff's work phone number.
+
+home_phone_number
+string
+The staff's home phone number.
+
+type
+string
+The type of the staff.
+
+title
+string
+The title of the staff.
+
+active
+boolean
+Whether or not this staff is currently active.
+
+default_hourly_rate
+number
+This staff member's default billing rate.
+
+updated_at
+string
+When the staff was last updated.
+
+created_at
+string
+When the staff was created.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/me \
+  --header 'Accept: application/json'
+{
+  "id": 0,
+  "email": "string",
+  "first_name": "string",
+  "middle_initial": "string",
+  "last_name": "string",
+  "address": {
+    "address1": "string",
+    "address2": "string",
+    "city": "string",
+    "state": "string",
+    "zip_code": "string",
+    "country": "string"
+  },
+  "cell_phone_number": "string",
+  "work_phone_number": "string",
+  "home_phone_number": "string",
+  "type": "string",
+  "title": "string",
+  "active": true,
+  "default_hourly_rate": 0,
+  "updated_at": "string",
+  "created_at": "string"
+}
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+Search MyCase API Documentation...
+Get Tasks
+get
+https://external-integrations.mycase.com/v1/tasks
+Get all firm tasks viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+name
+string
+The name of this task.
+
+description
+string
+priority
+string
+The priority of this task. One of (Low | Medium | High)
+
+due_date
+string
+The due date of this task in ISO 8601 date format.
+
+completed
+boolean
+Whether or not this task is completed.
+
+case
+object
+The case associated with this task, if there is one.
+
+id
+integer
+staff
+array[object]
+All staff associated with this task.
+
+id
+integer
+created_at
+string
+updated_at
+string
+completed_at
+string
+Null if the task has not been completed.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/tasks \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "name": "string",
+    "description": "string",
+    "priority": "string",
+    "due_date": "string",
+    "completed": true,
+    "case": {
+      "id": 0
+    },
+    "staff": [
+      {
+        "id": 0
+      }
+    ],
+    "created_at": "string",
+    "updated_at": "string",
+    "completed_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+Search MyCase API Documentation...
+Get Time Entries
+get
+https://external-integrations.mycase.com/v1/time_entries
+Get all firm time entries viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+OK
+
+Headers
+Item-Count
+number
+The total number of results.
+
+Link
+string
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+
+application/json
+
+application/json
+responses
+/
+200
+array of:
+id
+integer
+activity_name
+string
+The activity name associated with this time entry.
+
+description
+string
+billable
+boolean
+Whether or not this time entry is billable.
+
+entry_date
+string
+The entry date of this time entry in ISO 8601 date format.
+
+rate
+string
+The rate in dollars associated with this time entry.
+
+hours
+number
+The duration in hours associated with this time entry.
+
+flat_fee
+boolean
+Whether or not this time entry is a flat fee.
+
+case
+object
+id
+integer
+staff
+object
+id
+integer
+utbms_activity_code
+string
+The UTBMS Activity Code (LEDES Code Set II, 1999B) associated with this time entry, if present. See the UTBMS Codes guide for the full list of valid codes.
+
+utbms_task_code
+string
+The UTBMS Task Code (LEDES Code Set II, 1999B) associated with this time entry, if present. See the UTBMS Codes guide for the full list of valid codes.
+
+invoices
+array[object]
+id
+integer
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+The value of this custom field.
+
+created_at
+string
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+created_at
+string
+updated_at
+string
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/time_entries \
+  --header 'Accept: application/json'
+[
+  {
+    "id": 0,
+    "activity_name": "string",
+    "description": "string",
+    "billable": true,
+    "entry_date": "string",
+    "rate": "string",
+    "hours": 0,
+    "flat_fee": true,
+    "case": {
+      "id": 0
+    },
+    "staff": {
+      "id": 0
+    },
+    "utbms_activity_code": "string",
+    "utbms_task_code": "string",
+    "invoices": [
+      {
+        "id": 0
+      }
+    ],
+    "custom_field_values": [
+      {
+        "custom_field": {
+          "id": 0,
+          "field_type": "string"
+        },
+        "value": "string",
+        "created_at": "string",
+        "updated_at": "string"
+      }
+    ],
+    "created_at": "string",
+    "updated_at": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get an Individual Time Entry
+get
+https://external-integrations.mycase.com/v1/time_entries/{id}
+Allows you to view a specfic time entry, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+The id of the expense you want to view or update.
+
+Responses
+200
+OK
+
+Body
+
+application/json
+
+application/json
+id
+integer
+activity_name
+string
+The activity name associated with this time entry.
+
+description
+string
+billable
+boolean
+Whether or not this time entry is billable.
+
+entry_date
+string
+The entry date of this time entry in ISO 8601 date format.
+
+rate
+string
+The rate in dollars associated with this time entry.
+
+hours
+number
+The duration in hours associated with this time entry.
+
+flat_fee
+boolean
+Whether or not this time entry is a flat fee.
+
+case
+object
+id
+integer
+staff
+object
+id
+integer
+utbms_activity_code
+string
+The UTBMS Activity Code (LEDES Code Set II, 1999B) associated with this time entry, if present. See the UTBMS Codes guide for the full list of valid codes.
+
+utbms_task_code
+string
+The UTBMS Task Code (LEDES Code Set II, 1999B) associated with this time entry, if present. See the UTBMS Codes guide for the full list of valid codes.
+
+invoices
+array[object]
+id
+integer
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+The value of this custom field.
+
+created_at
+string
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+created_at
+string
+updated_at
+string
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/time_entries/{id} \
+  --header 'Accept: application/json'
+{
+  "id": 0,
+  "activity_name": "string",
+  "description": "string",
+  "billable": true,
+  "entry_date": "string",
+  "rate": "string",
+  "hours": 0,
+  "flat_fee": true,
+  "case": {
+    "id": 0
+  },
+  "staff": {
+    "id": 0
+  },
+  "utbms_activity_code": "string",
+  "utbms_task_code": "string",
+  "invoices": [
+    {
+      "id": 0
+    }
+  ],
+  "custom_field_values": [
+    {
+      "custom_field": {
+        "id": 0,
+        "field_type": "string"
+      },
+      "value": "string",
+      "created_at": "string",
+      "updated_at": "string"
+    }
+  ],
+  "created_at": "string",
+  "updated_at": "string"
+}
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+Search MyCase API Documentation...
+Get Webhook Subscriptions
+get
+https://external-integrations.mycase.com/v1/webhooks/subscriptions
+Get all current webhook subscriptions.
+
+Responses
+200
+OK
+
+Body
+
+application/json
+
+application/json
+array of:
+id
+string
+A unique identifier for the webhook subscription.
+
+model
+string
+The model this subsciption will receive updates for.
+
+url
+string
+The url where updates will be sent.
+
+actions
+array[string]
+The actions that updates will be received for. Any or all of created | updated | deleted.
+
+hmac_key
+string
+The hmac_key is the shared secret used to generate a cryptographic hash (HMAC) that ensures the integrity and authenticity of our webhook data. Please handle it securely to prevent unauthorized data transmission.
+
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/webhooks/subscriptions \
+  --header 'Accept: application/json'
+[
+  {
+    "id": "string",
+    "model": "string",
+    "url": "string",
+    "actions": [
+      "string"
+    ],
+    "hmac_key": "string"
+  }
+]
+MyCase API
+Home
+MyCase API Documentation
+OVERVIEW
+API REFERENCE
+Sign in
+
+
+
+
+
+

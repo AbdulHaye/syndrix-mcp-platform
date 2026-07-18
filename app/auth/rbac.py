@@ -24,6 +24,8 @@ TOOL_PERMISSIONS: dict[str, list[TeamRole]] = {
     "memory.": [TeamRole.BD, TeamRole.DEV, TeamRole.MGMT, TeamRole.ADMIN],
     # Podio Agent (LLM + Podio tools) — BD + Admin
     "agent.": [TeamRole.BD, TeamRole.ADMIN],
+    # MyCase Agent (LLM + MyCase read-only tools) — BD + Admin
+    "mycase.": [TeamRole.BD, TeamRole.ADMIN],
 }
 
 

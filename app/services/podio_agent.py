@@ -541,6 +541,217 @@ def _render_field_list(app_name: str, fields: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+# ── "Claimed to list records but didn't show them" guard ───────────────────────
+# Mirrors the get_app fields guard above, but for get_items / search_globally results:
+# the model sometimes replies "I fetched all N contacts and listed them in a table"
+# without the table actually being in the reply. Detect that and append a real,
+# deterministically-rendered table built straight from the tool result.
+
+def _find_items(data: Any) -> list[dict[str, Any]]:
+    """Locate a Podio item-records list (get_items / search_globally result) anywhere
+    in a result, regardless of nesting. Distinguished from an app 'fields' list by
+    requiring 'item_id' on each entry (field-schema entries carry 'external_id' instead)."""
+    def _is_item_list(x: Any) -> bool:
+        return isinstance(x, list) and any(isinstance(e, dict) and "item_id" in e for e in x)
+
+    if isinstance(data, dict):
+        if _is_item_list(data.get("items")):
+            return [e for e in data["items"] if isinstance(e, dict)]
+        for v in data.values():
+            found = _find_items(v)
+            if found:
+                return found
+    elif isinstance(data, list):
+        if _is_item_list(data):
+            return [e for e in data if isinstance(e, dict)]
+        for v in data:
+            found = _find_items(v)
+            if found:
+                return found
+    return []
+
+
+def _field_display_value(f: dict[str, Any]) -> str:
+    """Best-effort plain-text rendering of one Podio item field's value(s)."""
+    values = f.get("values")
+    if not isinstance(values, list) or not values:
+        return ""
+    parts: list[str] = []
+    for v in values[:3]:
+        if not isinstance(v, dict):
+            parts.append(str(v))
+            continue
+        if "value" in v:
+            val = v["value"]
+            if isinstance(val, dict):
+                parts.append(str(val.get("text") or val.get("value") or val))
+            else:
+                parts.append(str(val))
+        elif "start" in v:
+            parts.append(str(v.get("start")))
+        elif "text" in v:
+            parts.append(str(v["text"]))
+        else:
+            name = v.get("name") or v.get("title")
+            parts.append(str(name) if name else "")
+    return ", ".join(p for p in parts if p)
+
+
+def _render_items_table(app_name: str, items: list[dict[str, Any]]) -> str:
+    """A neutral, display-ready Markdown table of item records — item_id, title, and
+    a best-effort flattening of each item's field values."""
+    lines: list[str] = [
+        f"Found {len(items)} record(s) in **{app_name or 'this app'}**:",
+        "",
+        "| item_id | Title | Details |",
+        "|---|---|---|",
+    ]
+    for it in items:
+        iid = it.get("item_id") or it.get("id") or ""
+        title = str(it.get("title") or "").replace("|", "/")
+        flds = it.get("fields") or []
+        detail_parts = []
+        if isinstance(flds, list):
+            for f in flds:
+                if not isinstance(f, dict):
+                    continue
+                val = _field_display_value(f)
+                if val:
+                    label = f.get("label") or f.get("external_id") or ""
+                    detail_parts.append(f"{label}: {val}")
+        details = "; ".join(detail_parts).replace("|", "/")
+        lines.append(f"| {iid} | {title} | {details} |")
+    return "\n".join(lines)
+
+
+_CLAIMS_RECORDS_PHRASES = (
+    "fetched all", "fetched the", "listed them", "listed below", "listed above",
+    "in a table", "here are", "found and listed", "i listed", "have listed",
+    "shown below", "shown above", "table showing", "table below",
+    "tables above", "table above", "full table", "full tables",
+    "showing key details", "clear table", "clear tables", "detailed in the table",
+    "shown in the table", "for your reference",
+)
+
+
+def _claims_to_present_records(text: str) -> bool:
+    t = (text or "").lower()
+    return any(p in t for p in _CLAIMS_RECORDS_PHRASES)
+
+
+# Words in the user's OWN request signalling they want the actual records shown, not
+# just summarised — this is deliberately the PRIMARY signal (not the model's reply
+# phrasing, which is exactly what's unreliable: a model can dodge listing data using
+# wording no fixed phrase list anticipates). When the user asked to see records, the
+# completeness check below runs unconditionally, independent of how the model replies.
+_LISTING_INTENT_WORDS = (
+    "show", "list", "display", "give me", "get all", "see all", "all the",
+    "what are the", "which ", "pull up", "everything in", "table",
+)
+
+
+def _wants_record_listing(message: str) -> bool:
+    m = (message or "").lower()
+    return any(w in m for w in _LISTING_INTENT_WORDS)
+
+
+def _find_apps_list(data: Any) -> list[dict[str, Any]]:
+    """Locate a Podio apps list (get_apps_in_space result) anywhere in a result.
+    Distinguished from item/field lists by requiring 'app_id' while excluding entries
+    that also carry 'item_id' or 'external_id' (those are items / fields, not apps)."""
+    def _is_apps_list(x: Any) -> bool:
+        return isinstance(x, list) and any(
+            isinstance(e, dict) and "app_id" in e
+            and "item_id" not in e and "external_id" not in e
+            for e in x
+        )
+
+    if isinstance(data, dict):
+        for key in ("apps", "items"):
+            if _is_apps_list(data.get(key)):
+                return [e for e in data[key] if isinstance(e, dict)]
+        for v in data.values():
+            found = _find_apps_list(v)
+            if found:
+                return found
+    elif isinstance(data, list):
+        if _is_apps_list(data):
+            return [e for e in data if isinstance(e, dict)]
+        for v in data:
+            found = _find_apps_list(v)
+            if found:
+                return found
+    return []
+
+
+def _item_app_id(item: dict[str, Any]) -> str | None:
+    """Best-effort app_id for a single item record (used for search_globally results,
+    which can span multiple apps and carry the app info nested on each item)."""
+    app = item.get("app")
+    if isinstance(app, dict) and app.get("app_id") is not None:
+        return str(app["app_id"])
+    if item.get("app_id") is not None:
+        return str(item["app_id"])
+    return None
+
+
+def _render_multi_app_tables(
+    items_by_app: dict[str, dict[Any, dict[str, Any]]],
+    app_names: dict[str, str],
+    text: str,
+) -> list[str]:
+    """Return one rendered table per app whose fetched item_ids are NOT already all
+    present in ``text`` — i.e. every app queried this turn that the model's reply left
+    out or only partially represented (including a partially-shown paginated fetch)."""
+    sections: list[str] = []
+    for app_id, items_map in items_by_app.items():
+        items = list(items_map.values())
+        if not items:
+            continue
+        shown = sum(
+            1 for it in items
+            if it.get("item_id") is not None and str(it["item_id"]) in text
+        )
+        if shown >= len(items):
+            continue  # already fully represented in the reply — don't duplicate
+        name = app_names.get(app_id) or ("these results" if app_id == "_unknown" else f"App {app_id}")
+        logger.info(
+            "podio_agent_items_table_appended",
+            app=name, app_id=app_id, count=len(items), shown=shown,
+        )
+        sections.append(_render_items_table(name, items))
+    return sections
+
+
+def _augment_reply_with_missing_data(
+    text: str,
+    last_app_fields: list[dict[str, Any]],
+    last_app_name: str,
+    items_by_app: dict[str, dict[Any, dict[str, Any]]],
+    app_names: dict[str, str],
+    force_check: bool,
+) -> str:
+    """Deterministically append a field list / item table(s) when the model claimed to
+    show data (or the user asked to see it) but didn't actually include it — never
+    trust the model's word that data is 'in the reply'. Handles MULTIPLE apps queried
+    in one turn (e.g. "show orders and contacts") and multi-page/paginated fetches of
+    a single app — every app/page fetched is tracked and checked independently, not
+    just the most recently called one."""
+    if (
+        last_app_fields
+        and _claims_to_present_fields(text)
+        and _count_field_labels_shown(text, [f.get("label") for f in last_app_fields]) < 2
+    ):
+        logger.info("podio_agent_field_list_appended", app=last_app_name)
+        text = text.rstrip() + "\n\n" + _render_field_list(last_app_name, last_app_fields)
+
+    if items_by_app and (force_check or _claims_to_present_records(text)):
+        sections = _render_multi_app_tables(items_by_app, app_names, text)
+        if sections:
+            text = text.rstrip() + "\n\n" + "\n\n".join(sections)
+    return text
+
+
 # User-authored operating prompt, adapted to the real Podio MCP tool names
 # (filter_items→get_items, list_apps→get_apps_in_space, list_organizations→
 # get_organizations, list_workspaces→get_spaces_in_organization, list_members→
@@ -989,13 +1200,60 @@ def _tool_name_for_json(text: str, brace_pos: int, valid_names: set[str]) -> str
     return best_name
 
 
+_CALL_NAME_KEYS = ("name", "tool", "tool_name", "function_name")
+_CALL_ARGS_KEYS = ("arguments", "parameters", "args", "input")
+
+
+def _self_describing_call(
+    obj: dict[str, Any], valid_names: set[str]
+) -> tuple[str, dict[str, Any]] | None:
+    """Detect a JSON object that names its OWN tool call, e.g. ``{"name": "get_items",
+    "parameters": {"app_id": 123}}`` or the raw OpenAI/Anthropic envelope
+    ``{"function": {"name": "...", "arguments": {...}}}``. This is a far stronger,
+    self-contained signal than guessing the tool from surrounding text (a glued prefix
+    or nearby prose) — it must be tried FIRST. Critically, it is also immune to the bug
+    context-guessing has: text belonging to one call block can leak into the "nearby
+    prose" window of the NEXT block and misattribute it (see Session 21 — two separate
+    self-describing envelopes with no prose between them either dropped one call
+    entirely or attributed a later block's tool name using text scraped from an
+    earlier block, while also passing the whole envelope as args instead of the real
+    nested params). Returns ``(name, real_args)`` or ``None`` if not self-describing."""
+    fn = obj.get("function")
+    if isinstance(fn, dict):
+        inner = _self_describing_call(fn, valid_names)
+        if inner:
+            return inner
+
+    name_raw = next(
+        (obj[k] for k in _CALL_NAME_KEYS if isinstance(obj.get(k), str) and obj[k].strip()),
+        None,
+    )
+    if name_raw is None:
+        return None
+    name, _ = _recover_tool_name(name_raw, valid_names)
+    if name not in valid_names:
+        return None
+
+    args_val: Any = next((obj[k] for k in _CALL_ARGS_KEYS if k in obj), None)
+    if isinstance(args_val, str):
+        try:
+            args_val = json.loads(args_val)
+        except (json.JSONDecodeError, ValueError):
+            args_val = {}
+    if not isinstance(args_val, dict):
+        args_val = {}
+    return name, args_val
+
+
 def _extract_text_tool_calls(text: str, valid_names: set[str]) -> list[dict[str, Any]]:
     """Recover tool calls a model wrote as plain TEXT instead of using the structured
     function-calling format — e.g. `get_app{"app_id":123}`, `create_flow({...})`, a
-    garbled `get_appXYZ{"app_id":123}`, OR a bare JSON block whose tool name is only
-    named in the preceding prose ("Calling create_flow …\\n{...}"). Scans TOP-LEVEL
-    JSON objects, attributes each to a tool via _tool_name_for_json, and returns those
-    that resolve to a real tool with a valid JSON-object argument."""
+    garbled `get_appXYZ{"app_id":123}`, a self-describing envelope
+    `{"name": "get_items", "parameters": {...}}`, OR a bare JSON block whose tool name
+    is only named in the preceding prose ("Calling create_flow …\\n{...}"). Scans
+    TOP-LEVEL JSON objects; each is checked for a self-describing name+args envelope
+    first, then falls back to _tool_name_for_json (context-based) treating the whole
+    object as flat args. Returns those that resolve to a real tool."""
     if not text or "{" not in text:
         return []
     calls: list[dict[str, Any]] = []
@@ -1009,14 +1267,19 @@ def _extract_text_tool_calls(text: str, valid_names: set[str]) -> list[dict[str,
             i += 1
             continue
         try:
-            args = json.loads(obj)
+            parsed = json.loads(obj)
         except (json.JSONDecodeError, ValueError):
             i += 1
             continue
-        if isinstance(args, dict):
-            name = _tool_name_for_json(text, i, valid_names)
-            if name in valid_names:
-                calls.append({"name": name, "args": args})
+        if isinstance(parsed, dict):
+            self_described = _self_describing_call(parsed, valid_names)
+            if self_described:
+                name, call_args = self_described
+                calls.append({"name": name, "args": call_args})
+            else:
+                name = _tool_name_for_json(text, i, valid_names)
+                if name in valid_names:
+                    calls.append({"name": name, "args": parsed})
         i += len(obj)  # skip past this object (don't re-scan its nested braces)
     return calls
 
@@ -1313,6 +1576,20 @@ async def run_podio_agent(
     # if the model claims it "fetched the fields" but doesn't actually list them.
     last_app_fields: list[dict[str, Any]] = []
     last_app_name: str = ""
+    # EVERY get_items/search_globally record fetched this turn, accumulated per app_id
+    # (keyed by item_id, so repeated/paginated calls to the same app merge instead of
+    # overwriting) — used to append the real table(s) if the model's reply doesn't
+    # actually contain data for an app that was queried. Tracking every app (not just
+    # the most recent call) is what makes "show orders and contacts" append BOTH
+    # tables, and tracking every page is what makes a 37-item paginated fetch show all
+    # 37, not just the last page.
+    items_by_app: dict[str, dict[Any, dict[str, Any]]] = {}
+    app_names: dict[str, str] = {}
+    # Did the USER'S OWN message ask to see the records (vs. e.g. just a count)? This
+    # is the primary trigger for the completeness check — independent of how the model
+    # phrases its reply, since reply-phrase detection alone is exactly what a model can
+    # dodge with wording no fixed phrase list anticipates.
+    force_record_listing = _wants_record_listing(recent_text)
 
     for _ in range(_MAX_STEPS):
         assistant_msg = await model_gateway.chat(
@@ -1325,6 +1602,12 @@ async def run_podio_agent(
         # Use None (not "") — Mistral rejects empty-string content on tool-call messages.
         if assistant_msg and assistant_msg.get("tool_calls"):
             assistant_msg = {**assistant_msg, "content": None}
+        elif not (assistant_msg or {}).get("content") and not (assistant_msg or {}).get("tool_calls"):
+            # A genuinely empty turn (no content, no tool_calls) can get RE-SENT on a
+            # later loop iteration — Mistral rejects an assistant message with
+            # neither ("must have content or tool_calls, but not none"), so this
+            # stays a placeholder, never truly empty.
+            assistant_msg = {**(assistant_msg or {}), "role": "assistant", "content": "(no response)"}
         messages.append(assistant_msg or {})
 
         tool_calls = (assistant_msg or {}).get("tool_calls") or []
@@ -1414,14 +1697,13 @@ async def run_podio_agent(
                     })
                     continue
             else:
-                final_text = candidate
-                # If the model claims it "fetched the fields" but didn't actually list
-                # them, append the real field list so the user can choose.
-                if (last_app_fields
-                        and _claims_to_present_fields(final_text)
-                        and _count_field_labels_shown(final_text, [f.get("label") for f in last_app_fields]) < 2):
-                    logger.info("podio_agent_field_list_appended", app=last_app_name)
-                    final_text = final_text.rstrip() + "\n\n" + _render_field_list(last_app_name, last_app_fields)
+                # If the model claims it fetched/listed fields or records — or the user
+                # asked to see them — but they didn't actually appear, deterministically
+                # append the real data for every app queried this turn.
+                final_text = _augment_reply_with_missing_data(
+                    candidate, last_app_fields, last_app_name,
+                    items_by_app, app_names, force_record_listing,
+                )
             break
 
         for call in tool_calls:
@@ -1510,6 +1792,47 @@ async def run_podio_agent(
                 if isinstance(result, dict) and result.get("fields"):
                     last_app_fields = result.get("fields") or []
                     last_app_name = (result.get("app") or {}).get("name") or ""
+                app_meta = (result or {}).get("app") or {}
+                if app_meta.get("app_id") is not None and app_meta.get("name"):
+                    app_names[str(app_meta["app_id"])] = app_meta["name"]
+
+            # get_apps_in_space returns app_id/name pairs — capture them too, so an app
+            # whose records are fetched WITHOUT a prior get_app call (e.g. the model went
+            # straight from "List Apps" to "Get Items") still gets a real name in the
+            # table header instead of a bare "App <id>".
+            if name == "get_apps_in_space" and not (result or {}).get("isError"):
+                for app_entry in _find_apps_list(result):
+                    aid, aname = app_entry.get("app_id"), app_entry.get("name")
+                    if aid is not None and aname:
+                        app_names[str(aid)] = aname
+
+            # Accumulate EVERY get_items/search_globally record fetched this turn, keyed
+            # by app_id, so a reply that CLAIMS to have listed/fetched records (or was
+            # simply asked to) can be backstopped with the real, COMPLETE data — every
+            # app queried (not just the most recent one) and every page of a paginated
+            # fetch (not just the last page). See Session 18/20 bugs: model said "I
+            # fetched all 3 contacts and listed them" / "fetched 37 orders and 5
+            # contacts" with no table shown, and a 2nd-app or 2nd-page fetch silently
+            # overwrote the first.
+            if name == "get_items" and not (result or {}).get("isError"):
+                found_items = _find_items(result)
+                if found_items:
+                    app_key = str(args.get("app_id")) if args.get("app_id") is not None else "_unknown"
+                    bucket = items_by_app.setdefault(app_key, {})
+                    for it in found_items:
+                        iid = it.get("item_id")
+                        bucket[iid if iid is not None else id(it)] = it
+            elif name == "search_globally" and not (result or {}).get("isError"):
+                found_items = _find_items(result)
+                for it in found_items:
+                    resolved = _item_app_id(it)
+                    app_key = resolved or "_unknown"
+                    app_obj = it.get("app")
+                    if resolved and isinstance(app_obj, dict) and app_obj.get("name"):
+                        app_names.setdefault(resolved, app_obj["name"])
+                    bucket = items_by_app.setdefault(app_key, {})
+                    iid = it.get("item_id")
+                    bucket[iid if iid is not None else id(it)] = it
 
             # Harvest ids from the result so later steps can validate against them.
             _collect_ids(result, {"task_id"}, seen_task_ids)
@@ -1564,7 +1887,10 @@ async def run_podio_agent(
         closing = await model_gateway.chat(messages, model=model, num_predict=_NUM_PREDICT_FINAL)
         candidate = (closing or {}).get("content", "") or ""
         if not _is_garbage_reply(candidate):
-            final_text = candidate
+            final_text = _augment_reply_with_missing_data(
+                candidate, last_app_fields, last_app_name,
+                items_by_app, app_names, force_record_listing,
+            )
         else:
             # Still garbage — build a minimal summary from step results directly.
             ok_tools = [s["tool"] for s in steps if not (s.get("result") or {}).get("isError")]

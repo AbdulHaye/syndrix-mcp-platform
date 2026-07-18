@@ -158,6 +158,88 @@ export async function runPodioAgent(
   });
 }
 
+// ── Podio Agent chat session persistence (DB-backed history) ────────────────
+
+export async function listPodioChatSessions(): Promise<
+  import("@/types").PodioChatSessionSummary[]
+> {
+  return request("/agent/podio/sessions");
+}
+
+export async function getPodioChatSession(
+  id: string
+): Promise<import("@/types").PodioChatSessionDetail> {
+  return request(`/agent/podio/sessions/${id}`);
+}
+
+export async function savePodioChatSession(
+  id: string,
+  title: string,
+  messages: import("@/types").PodioChatMessage[]
+): Promise<import("@/types").PodioChatSessionSummary> {
+  return request(`/agent/podio/sessions/${id}`, {
+    method: "PUT",
+    body: JSON.stringify({ title, messages }),
+  });
+}
+
+export async function deletePodioChatSession(id: string): Promise<{ success: boolean }> {
+  return request(`/agent/podio/sessions/${id}`, { method: "DELETE" });
+}
+
+// ── MyCase Agent ──────────────────────────────────────────────────────────────
+
+export async function getMyCaseStatus(): Promise<{ connected: boolean }> {
+  return request("/agent/mycase/status");
+}
+
+export async function startMyCaseConnect(): Promise<{ success: boolean; authorize_url?: string; error?: string }> {
+  return request("/integrations/mycase/connect");
+}
+
+export async function disconnectMyCase(): Promise<{ success: boolean }> {
+  return request("/integrations/mycase/disconnect", { method: "POST" });
+}
+
+export async function runMyCaseAgent(
+  message: string,
+  history: { role: string; content: string }[] = [],
+  signal?: AbortSignal
+): Promise<import("@/types").MyCaseAgentResponse> {
+  return request<import("@/types").MyCaseAgentResponse>("/agent/mycase", {
+    method: "POST",
+    body: JSON.stringify({ message, history }),
+    signal,
+  });
+}
+
+export async function listMyCaseChatSessions(): Promise<
+  import("@/types").MyCaseChatSessionSummary[]
+> {
+  return request("/agent/mycase/sessions");
+}
+
+export async function getMyCaseChatSession(
+  id: string
+): Promise<import("@/types").MyCaseChatSessionDetail> {
+  return request(`/agent/mycase/sessions/${id}`);
+}
+
+export async function saveMyCaseChatSession(
+  id: string,
+  title: string,
+  messages: import("@/types").MyCaseChatMessage[]
+): Promise<import("@/types").MyCaseChatSessionSummary> {
+  return request(`/agent/mycase/sessions/${id}`, {
+    method: "PUT",
+    body: JSON.stringify({ title, messages }),
+  });
+}
+
+export async function deleteMyCaseChatSession(id: string): Promise<{ success: boolean }> {
+  return request(`/agent/mycase/sessions/${id}`, { method: "DELETE" });
+}
+
 // ── Podio MCP connection (OAuth) ──────────────────────────────────────────────
 
 export interface PodioSelectedWorkspace {
@@ -293,20 +375,24 @@ export async function uploadPodioFile(
 
 // ── LLM model selection ───────────────────────────────────────────────────────
 
-export async function listLlmModels(): Promise<{
+export async function listLlmModels(agent: "podio" | "mycase" = "podio"): Promise<{
   ollama: string[];
   google: string[];
   groq: string[];
   mistral: string[];
   openai: string[];
   anthropic: string[];
+  zai: string[];
   selected: string;
 }> {
-  return request("/llm/models");
+  return request(`/llm/models?agent=${agent}`);
 }
 
-export async function setLlmModel(model: string): Promise<{ success: boolean; model: string }> {
-  return request("/llm/model", { method: "POST", body: JSON.stringify({ model }) });
+export async function setLlmModel(
+  model: string,
+  agent: "podio" | "mycase" = "podio"
+): Promise<{ success: boolean; model: string; agent: string }> {
+  return request("/llm/model", { method: "POST", body: JSON.stringify({ model, agent }) });
 }
 
 // ── User Management ──────────────────────────────────────────────────────────

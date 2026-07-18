@@ -162,6 +162,37 @@ export interface PodioChatMessage {
   error?: boolean;
 }
 
+export interface PodioChatSessionSummary {
+  id: string;
+  title: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PodioChatSessionDetail extends PodioChatSessionSummary {
+  messages: PodioChatMessage[];
+}
+
+// ── MyCase Agent ──────────────────────────────────────────────────────────────
+// Structurally identical to the Podio Agent's shapes (same step-card / chat-session
+// UI is reused) — aliased rather than duplicated so the two stay in sync by
+// construction.
+
+export type MyCaseAgentStep = PodioAgentStep;
+
+export interface MyCaseAgentResponse {
+  success: boolean;
+  reply: string;
+  steps: MyCaseAgentStep[];
+  model?: string;
+  error?: string;
+}
+
+export type MyCaseChatMessage = PodioChatMessage;
+export type MyCaseChatSessionSummary = PodioChatSessionSummary;
+export type MyCaseChatSessionDetail = PodioChatSessionDetail;
+
 export interface PodioWorkspace {
   space_id: number;
   name: string | null;

@@ -18,12 +18,16 @@ import {
   startPodioFilesConnect,
   uploadPodioFile,
   downloadPodioFile,
+  listPodioChatSessions,
+  getPodioChatSession,
+  savePodioChatSession,
+  deletePodioChatSession,
 } from "@/lib/api";
 import { getAuth } from "@/lib/auth";
 import { useToast } from "@/lib/toast";
 import Markdown from "@/components/Markdown";
 import JsonTree from "@/components/JsonTree";
-import type { PodioChatMessage, PodioAgentStep } from "@/types";
+import type { PodioChatMessage, PodioAgentStep, PodioChatSessionSummary } from "@/types";
 
 const TOOL_META: Record<string, { label: string; icon: string; color: string }> = {
   // Podio MCP tool names
@@ -580,6 +584,7 @@ function ModelSelector() {
   const [mistral, setMistral] = useState<string[]>([]);
   const [openai, setOpenai] = useState<string[]>([]);
   const [anthropic, setAnthropic] = useState<string[]>([]);
+  const [zai, setZai] = useState<string[]>([]);
   const [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -593,6 +598,7 @@ function ModelSelector() {
         setMistral(res.mistral ?? []);
         setOpenai(res.openai ?? []);
         setAnthropic(res.anthropic ?? []);
+        setZai(res.zai ?? []);
         setSelected(res.selected);
       } catch {
         /* ignore */
@@ -627,7 +633,7 @@ function ModelSelector() {
       >
         {loading && <option>Loading models…</option>}
         {/* Ensure the current selection is always shown even if discovery missed it */}
-        {!loading && selected && ![...ollama, ...google, ...groq, ...mistral, ...openai, ...anthropic].includes(selected) && (
+        {!loading && selected && ![...ollama, ...google, ...groq, ...mistral, ...openai, ...anthropic, ...zai].includes(selected) && (
           <option value={selected}>{label(selected)}</option>
         )}
         {ollama.length > 0 && (
@@ -672,8 +678,16 @@ function ModelSelector() {
             ))}
           </optgroup>
         )}
+        {zai.length > 0 && (
+          <optgroup label="Z.ai (GLM)">
+            {zai.map((m) => (
+              <option key={m} value={m}>{label(m)}</option>
+            ))}
+          </optgroup>
+        )}
         {!loading && ollama.length === 0 && google.length === 0 && groq.length === 0 &&
-          mistral.length === 0 && openai.length === 0 && anthropic.length === 0 && (
+          mistral.length === 0 && openai.length === 0 && anthropic.length === 0 &&
+          zai.length === 0 && (
           <option value="">No models found</option>
         )}
       </select>
@@ -817,26 +831,18 @@ function WorkspacePicker({ enabled }: { enabled: boolean }) {
   );
 }
 
-// ── Chat session history (persisted client-side) ─────────────────────────────
-type ChatSession = {
-  id: string;
-  title: string;
-  messages: PodioChatMessage[];
-  createdAt: number;
-  updatedAt: number;
-};
-const SESSIONS_KEY = "podio_chat_sessions_v1";
+// ── Chat session history (persisted server-side, in the podio_chat_sessions table) ──
+// Sessions are DB-backed so history survives across browsers/devices. The frontend
+// only ever holds the lightweight PodioChatSessionSummary list (id/title/message_count/
+// timestamps) for the History dropdown; full messages are fetched on demand when a
+// session is opened, and written back via an upsert (PUT) whenever the active chat's
+// messages change.
 
 function makeSessionId(): string {
   try {
     if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   } catch {}
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function makeSession(): ChatSession {
-  const now = Date.now();
-  return { id: makeSessionId(), title: "New chat", messages: [], createdAt: now, updatedAt: now };
 }
 
 function deriveTitle(msgs: PodioChatMessage[]): string {
@@ -846,8 +852,8 @@ function deriveTitle(msgs: PodioChatMessage[]): string {
   return line.length > 40 ? `${line.slice(0, 40)}…` : line;
 }
 
-function relativeTime(ts: number): string {
-  const diff = Date.now() - ts;
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
   const min = Math.round(diff / 60000);
   if (min < 1) return "just now";
   if (min < 60) return `${min}m ago`;
@@ -862,7 +868,7 @@ function HistoryMenu({
   onSelect,
   onDelete,
 }: {
-  sessions: ChatSession[];
+  sessions: PodioChatSessionSummary[];
   currentId: string;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
@@ -870,8 +876,8 @@ function HistoryMenu({
   const [open, setOpen] = useState(false);
   // Only show chats that actually have messages, newest-created first.
   const sorted = sessions
-    .filter((s) => s.messages.length > 0)
-    .sort((a, b) => b.createdAt - a.createdAt);
+    .filter((s) => s.message_count > 0)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   return (
     <div style={{ position: "relative" }}>
       <button
@@ -912,7 +918,7 @@ function HistoryMenu({
                     {s.title || "New chat"}
                   </div>
                   <div style={{ fontSize: "0.68rem", color: "#94a3b8" }}>
-                    {s.messages.length} msg · {relativeTime(s.updatedAt)}
+                    {s.message_count} msg · {relativeTime(s.updated_at)}
                   </div>
                 </div>
                 <button
@@ -945,7 +951,7 @@ export default function PodioAgentPage() {
   const [mounted, setMounted] = useState(false);
   const [connected, setConnected] = useState(false);
   const [filesConnected, setFilesConnected] = useState(false);
-  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [sessions, setSessions] = useState<PodioChatSessionSummary[]>([]);
   const [currentId, setCurrentId] = useState("");
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -956,89 +962,79 @@ export default function PodioAgentPage() {
   // role-dependent UI until after mount to avoid a hydration mismatch.
   useEffect(() => setMounted(true), []);
 
-  // Load persisted chat sessions (client-side) after mount.
-  // Always start a fresh chat on page load; previous chats remain in History.
+  // Load the session list from the database after mount, then always start a
+  // fresh (unsaved) chat — previous chats remain reachable via History. The new
+  // chat isn't written to the DB until it has at least one message.
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(SESSIONS_KEY);
-      const parsed: ChatSession[] = raw ? JSON.parse(raw) : [];
-      // Backfill createdAt for sessions saved before it existed (fall back to updatedAt).
-      const existing = (Array.isArray(parsed) ? parsed : []).map((s) => ({
-        ...s,
-        createdAt: s.createdAt ?? s.updatedAt ?? Date.now(),
-      }));
-      const s = makeSession();
-      setSessions([s, ...existing]);
-      setCurrentId(s.id);
+    (async () => {
+      try {
+        const existing = await listPodioChatSessions();
+        setSessions(existing);
+      } catch {
+        setSessions([]);
+      }
+      setCurrentId(makeSessionId());
       setMessages([]);
-    } catch {
-      const s = makeSession();
-      setSessions([s]);
-      setCurrentId(s.id);
-    }
-    setHistoryLoaded(true);
+      setHistoryLoaded(true);
+    })();
   }, []);
 
-  // Write the live conversation back into the current session.
+  // Persist the live conversation to the database whenever it changes (upsert by
+  // currentId — creates the session row on the first message, updates it after).
   useEffect(() => {
-    if (!historyLoaded || !currentId) return;
-    setSessions((prev) => {
-      const idx = prev.findIndex((s) => s.id === currentId);
-      const now = Date.now();
-      const updated: ChatSession = {
-        id: currentId,
-        title: deriveTitle(messages),
-        messages,
-        createdAt: prev[idx]?.createdAt ?? now,
-        updatedAt: now,
-      };
-      if (idx === -1) return [updated, ...prev];
-      const copy = [...prev];
-      copy[idx] = updated;
-      return copy;
-    });
+    if (!historyLoaded || !currentId || messages.length === 0) return;
+    savePodioChatSession(currentId, deriveTitle(messages), messages)
+      .then((summary) => {
+        setSessions((prev) => {
+          const idx = prev.findIndex((s) => s.id === currentId);
+          if (idx === -1) return [summary, ...prev];
+          const copy = [...prev];
+          copy[idx] = summary;
+          return copy;
+        });
+      })
+      .catch(() => {
+        // Best-effort — keep the conversation in local state even if the save fails
+        // (e.g. transient network issue); it will retry on the next message.
+      });
   }, [messages, currentId, historyLoaded]);
 
-  // Persist sessions to localStorage.
-  useEffect(() => {
-    if (!historyLoaded) return;
-    try {
-      localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
-    } catch {}
-  }, [sessions, historyLoaded]);
-
   function newChat() {
-    const s = makeSession();
-    setSessions((prev) => [s, ...prev]);
-    setCurrentId(s.id);
+    setCurrentId(makeSessionId());
     setMessages([]);
     setInput("");
     setAttachment(null);
   }
 
-  function loadSession(id: string) {
-    const s = sessions.find((x) => x.id === id);
-    if (!s) return;
+  async function loadSession(id: string) {
     setCurrentId(id);
-    setMessages(s.messages ?? []);
+    try {
+      const detail = await getPodioChatSession(id);
+      setMessages(detail.messages ?? []);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to load chat");
+      setMessages([]);
+    }
   }
 
-  function deleteSession(id: string) {
+  async function deleteSession(id: string) {
+    try {
+      await deletePodioChatSession(id);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete chat");
+      return;
+    }
     const next = sessions.filter((s) => s.id !== id);
+    setSessions(next);
     if (id === currentId) {
       if (next.length) {
-        const latest = [...next].sort((a, b) => b.updatedAt - a.updatedAt)[0];
-        setCurrentId(latest.id);
-        setMessages(latest.messages ?? []);
-        setSessions(next);
+        const latest = [...next].sort(
+          (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+        )[0];
+        await loadSession(latest.id);
       } else {
-        const s = makeSession();
-        setSessions([s]);
-        setCurrentId(s.id);
-        setMessages([]);
+        newChat();
       }
-    } else {
-      setSessions(next);
     }
   }
 

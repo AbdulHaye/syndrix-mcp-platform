@@ -29,8 +29,9 @@ const ALL_TEAM_ITEMS: SubItem[] = [
   { label: "Management",  href: "/dashboard/mgmt",        icon: "bi-bar-chart-line", roles: ["mgmt", "admin"] },
 ];
 
-// Podio Agent is a top-level item directly under the Team Tools section.
+// Podio Agent and MyCase Agent are top-level items directly under the Team Tools section.
 const PODIO_AGENT_ROLES: TeamRole[] = ["bd", "admin"];
+const MYCASE_AGENT_ROLES: TeamRole[] = ["bd", "admin"];
 
 const ALL_SHARED_ITEMS: SubItem[] = [
   { label: "Knowledge Base", href: "/dashboard/rag",     icon: "bi-journal-bookmark-fill", roles: ["bd", "dev", "mgmt", "admin"] },
@@ -147,6 +148,24 @@ export default function Sidebar() {
                 />
               </div>
               Podio Agent
+            </Link>
+          )}
+          {MYCASE_AGENT_ROLES.includes(role) && (
+            <Link
+              href="/dashboard/mycase-agent"
+              className={`sb-single${pathname.startsWith("/dashboard/mycase-agent") ? " active" : ""}`}
+              onClick={close}
+            >
+              <div
+                className="sb-section-icon"
+                style={{ background: pathname.startsWith("/dashboard/mycase-agent") ? "rgba(99,102,241,0.25)" : "rgba(255,255,255,0.06)" }}
+              >
+                <i
+                  className="bi bi-briefcase"
+                  style={{ color: pathname.startsWith("/dashboard/mycase-agent") ? "#a5b4fc" : "#94a3b8", fontSize: "0.85rem" }}
+                />
+              </div>
+              MyCase Agent
             </Link>
           )}
           <AccordionGroup

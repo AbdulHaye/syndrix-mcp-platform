@@ -46,7 +46,9 @@
       "PowerShell(try { $r = Invoke-RestMethod -Uri \"http://localhost:8000/auth/login\" -Method Post -ContentType \"application/json\" -Body '{\"email\":\"admin@syndrix.local\",\"password\":\"changeme\"}' -ErrorAction Stop; \"LOGIN OK - token starts: \" + $r.access_token.Substring\\(0,20\\) + \"...\" } catch { \"LOGIN FAILED: \" + $_.Exception.Message + \" | \" + $_.ErrorDetails.Message })",
       "Bash(env/Scripts/python.exe -c \"import ast; ast.parse\\(open\\('app/services/podio_rest.py',encoding='utf-8'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
       "Bash(PYTHONPATH=\"C:/Users/360SynergyTech/Downloads/syndrix-mcp-platform\" env/Scripts/python.exe \"C:/Users/360SYN~1/AppData/Local/Temp/claude/C--Users-360SynergyTech-Downloads-syndrix-mcp-platform/eb7f8e90-5ade-4d33-a9e5-ebd202ae9eae/scratchpad/check_flows.py\")",
-      "Bash(env/Scripts/python.exe \"C:/Users/360SYN~1/AppData/Local/Temp/claude/C--Users-360SynergyTech-Downloads-syndrix-mcp-platform/eb7f8e90-5ade-4d33-a9e5-ebd202ae9eae/scratchpad/unit.py\")"
+      "Bash(env/Scripts/python.exe \"C:/Users/360SYN~1/AppData/Local/Temp/claude/C--Users-360SynergyTech-Downloads-syndrix-mcp-platform/eb7f8e90-5ade-4d33-a9e5-ebd202ae9eae/scratchpad/unit.py\")",
+      "WebFetch(domain:mycaseapi.stoplight.io)",
+      "WebFetch(domain:supportcenter.mycase.com)"
     ]
   }
 }

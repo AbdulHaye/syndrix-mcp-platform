@@ -217,7 +217,9 @@ from app.api.ingest import router as ingest_router  # noqa: E402
 from app.api.tools import router as tools_router  # noqa: E402
 from app.api.settings import router as settings_router  # noqa: E402
 from app.api.agent import router as agent_router  # noqa: E402
+from app.api.mycase_agent import router as mycase_agent_router  # noqa: E402
 from app.api.integrations import router as integrations_router  # noqa: E402
+from app.api.integrations_mycase import router as integrations_mycase_router  # noqa: E402
 from app.api.podio_files import router as podio_files_router  # noqa: E402
 from app.api.llm import router as llm_router  # noqa: E402
 
@@ -228,7 +230,9 @@ app.include_router(ingest_router)
 app.include_router(tools_router)
 app.include_router(settings_router)
 app.include_router(agent_router)
+app.include_router(mycase_agent_router)
 app.include_router(integrations_router)
+app.include_router(integrations_mycase_router)
 app.include_router(podio_files_router)
 app.include_router(llm_router)
 
