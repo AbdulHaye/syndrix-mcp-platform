@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.parse
 from datetime import datetime
 from typing import Any
 
@@ -37,7 +38,9 @@ _OLLAMA_TOOL_PRIORITY: dict[str, set[str]] = {
     "folder structure": {"get_case_folder_tree"}, "subfolder": {"get_folder_subfolders", "get_case_folder_tree"},
     "event": {"get_events"}, "calendar": {"get_events"}, "meeting": {"get_events"},
     "expense": {"get_expenses", "get_expense"},
-    "invoice": {"get_invoices", "get_invoice_payments"}, "payment": {"get_invoice_payments"},
+    "invoice": {"get_invoices", "get_invoices_by_date", "get_case_invoices", "get_invoice_payments"}, "payment": {"get_invoice_payments"},
+    "created on": {"get_invoices_by_date"}, "due on": {"get_invoices_by_date"}, "invoiced": {"get_invoices_by_date"},
+    "invoices for": {"get_case_invoices"}, "invoices related to": {"get_case_invoices"},
     "billing": {"get_invoices", "get_invoice_payments", "get_expenses", "get_time_entries"},
     "time entry": {"get_time_entries", "get_time_entry", "lookup_utbms_code"}, "hours": {"get_time_entries"},
     "utbms": {"lookup_utbms_code"}, "ledes": {"lookup_utbms_code"},
@@ -311,7 +314,7 @@ _RESOURCE_WORD_TO_KEY = {
     "note": "notes", "call": "calls", "staff": "staff",
 }
 _RESOURCE_CLAIM_RE = re.compile(
-    r"\b\d[\d,]*\s+(client|lead|case|compan(?:y|ies)|invoice|document|contact|expense|task|event|note|call|staff)s?\b",
+    r"\b\d[\d,]*\s+(?:\w+\s+){0,2}(client|lead|case|compan(?:y|ies)|invoice|document|contact|expense|task|event|note|call|staff)s?\b",
     re.IGNORECASE,
 )
 
@@ -380,6 +383,48 @@ def _augment_reply_with_missing_data(
     return text
 
 
+# download_document / download_document_version — the chat UI renders a dedicated
+# "Download" button for these (see mycase-agent/page.tsx's DownloadCard), sourced
+# straight from the real tool result, not the model's text. The system prompt
+# tells the model not to paste the raw presigned URL itself, but that's not
+# reliably followed (a weaker model has been observed pasting it as a markdown
+# link — the URL is long, only valid ~1 minute, and easy for the model to render
+# as inert plain text instead of a working link), so it's stripped deterministically
+# below rather than trusted to prompting alone.
+_DOWNLOAD_TOOLS = {"download_document", "download_document_version"}
+_RESOURCE_KEY_ALIASES = {"invoices_by_date": "invoices", "case_invoices": "invoices"}
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
+
+
+def _strip_download_link_urls(text: str, download_urls: list[str]) -> str:
+    """Remove any markdown link (or bare occurrence) of a URL this turn actually
+    returned from download_document/download_document_version, keeping just the
+    link's label text — the real download affordance is the button the UI renders
+    from the raw tool result, not anything in the reply text. Matches on
+    scheme+host+path (ignoring the query string) as well as an exact match, since
+    a model retyping a long presigned URL can subtly mangle the query params
+    without meaning to."""
+    if not download_urls or not text:
+        return text
+
+    def _base(u: str) -> str:
+        p = urllib.parse.urlparse(u)
+        return f"{p.scheme}://{p.netloc}{p.path}"
+
+    exact = set(download_urls)
+    bases = {_base(u) for u in download_urls}
+
+    def _sub_link(m: re.Match) -> str:
+        label, href = m.group(1), m.group(2)
+        return label if (href in exact or _base(href) in bases) else m.group(0)
+
+    text = _MD_LINK_RE.sub(_sub_link, text)
+    # Defensive second pass: a bare (non-markdown) occurrence of the exact URL.
+    for url in download_urls:
+        text = text.replace(url, "")
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
+
+
 _SYSTEM_PROMPT = """You are a MyCase legal practice management assistant. Execute tasks accurately using available tools. Never fabricate data.
 
 CORE RULES
@@ -414,9 +459,12 @@ KEY RESOURCES
 - A CASE'S CLIENT(S): a case's `clients` array holds `{"id": N, ...}` per client. PREFER ONE call — get_case(case_id, field_client="id,first_name,last_name,email") — which expands each client inline within the SAME case result, so the whole answer (case + client name/email) stays in one table instead of splitting into a second one. Only use the separate get_client(id) when the user is asking about a client directly, not via a case. If get_client(id) 404s, that id is a stale/orphaned reference (the client record no longer exists in MyCase) — say so plainly and do NOT retry the same id again; retrying an identical call that already failed wastes a step and never produces a different result.
 - Clients (people) vs Companies vs Leads are separate resources — get_clients/get_client, get_companies/get_company, get_leads/get_lead. A "client" is always a person; a company is an org; a lead is a pre-intake prospect.
 - Documents: "show/list/find all documents for case X" → get_case_documents(case_id) — this is the COMPLETE list for that case in ONE call, regardless of folder/subfolder. Do NOT walk get_case_folder/get_folder_subfolders/get_folder_documents just to list a case's documents. get_documents = firm-wide (all cases). get_document(id) = one document's own metadata. download_document / download_document_version return a temporary signed URL (do not fetch the bytes yourself).
+- DOWNLOAD LINKS: after a successful download_document/download_document_version call, the UI automatically renders a real "Download" BUTTON below your reply — do NOT paste the raw download_url into your reply text as a markdown link (it's long, easy to mis-render as plain text the user has to copy/paste, and would just duplicate the button). Instead give a short acknowledgment and state the tool result's OWN `expires_in` value (never invent a duration — download_document is valid only ~1 minute, download_document_version ~1 hour), e.g. "Here's the download — the link expires in 1 minute, so click the button below right away." If the user reports the download failed with an XML/S3 error (anything mentioning "anonymous GET requests" or an `<Error>...</Error>` block), that means the link EXPIRED — it is not a bug or a broken document; just call download_document/download_document_version again for a fresh one (a new button will render).
 - "Get the folder structure for case X" / "show me the folders/subfolders for case X": this IS a folder-structure request (unlike the document-list case above) — call get_case_folder_tree(case_id) once; it recursively returns the whole tree (every folder + its documents) in one call. Only use get_folder_subfolders(folder_id)/get_folder_documents(folder_id) individually when the user gives you a SPECIFIC known folder id and wants just that one level (e.g. "what's in folder 55").
 - "Find N cases that HAVE documents": there is no server-side filter for this — use aggregate_cases-style deterministic tooling, NOT a manual sample. Call find_cases_with_documents(limit=N) — it scans every document firm-wide, tallies which cases they belong to, and returns the N cases with the most documents (each case row includes document_count). Do NOT just grab the first few cases from get_cases and hope some of them happen to have documents — that produces wrong/incomplete answers for exactly the reason aggregate_cases/search_cases exist: an LLM sampling a handful of records cannot reliably answer a question that requires checking across the whole dataset.
 - Billing: get_invoices (NOTE: only invoices with online payments enabled are returned by default — pass only_allowed_online_payments=false to see all), get_invoice_payments, get_expenses, get_time_entries. Time entries may carry utbms_activity_code / utbms_task_code (LEDES billing codes) — use lookup_utbms_code(code) to explain what one means rather than guessing; an activity code always has an accompanying task code, but a task code can stand alone.
+- INVOICES "CREATED/DUE/DATED on|before|after X": get_invoices has NO server-side filter for an exact date — its only date param (updated_after) is a floor on created-OR-updated time, NOT the same as "created on X", and has no relation to invoice_date/due_date at all. Using get_invoices alone for a date-specific question WILL return the wrong set (invoices merely touched/updated on that date, not created on it) — call get_invoices_by_date(date_field="created_at"|"updated_at"|"invoice_date"|"due_date", on=/after=/before=) instead; it returns only the matching invoices, already filtered. Never try to eyeball-filter get_invoices' raw output yourself by comparing dates in your head — a past incident showed this failing invisibly: the reply correctly said "4 matched" but the chat's own result table (built directly from the tool result, not your text) still showed all 20 unfiltered rows, since the underlying get_invoices call itself never actually filtered by date.
+- INVOICES "FOR A CASE" ("invoices for case X", "invoices related to the Asylum case for Moise Pierre"): call get_case_invoices(case_id=... or case_query=...) — it resolves the case AND filters invoices in one call (get_invoices has no server-side case filter). CRITICAL — if it returns matched_case=null and an empty items[] (case_query matched no case), that means the case genuinely was not found: say so plainly (e.g. "No case found matching X") and suggest an alternative (search by the client's name, or ask the user for the exact case id/case number) exactly as instructed in its `note`. Do NOT then call get_invoices or get_cases yourself to keep looking "just in case" — a past incident did exactly that, burning a pointless full-firm scan of 1,000 invoices that could never have matched (there was no case to filter by) and confusing the user with an irrelevant "found 1,000 invoices in the system" aside. A failed lookup ends with a clear "not found" + your recommendation, never a fallback scan of an unrelated dataset. If it returns `candidates` (multiple cases matched), list them and ask the user to pick one before fetching anything else.
 - Calendar: get_events. Tasks: get_tasks. Notes: get_case_notes / get_client_notes / get_note (by id).
 - Reference/config data (rarely change): get_case_stages, get_case_roles, get_practice_areas, get_locations, get_referral_sources, get_people_groups, get_custom_fields (+ get_custom_field_list_options for list-type fields). IMPORTANT: these return the firm's DEFINED list of possible values (e.g. get_case_stages returns every stage NAME the firm has configured, however many that is) — this is config data, not case data. Its row count has NOTHING to do with how many cases are actually in any given stage; never present it, or its count, as if it were a filtered case result. These NEVER get an automatic table in the chat UI (unlike cases/clients/invoices/etc.) — when the user asks "what stages/roles/practice areas/locations/custom fields exist", you must list every actual value in your reply text, not just a count (see THIS DOES NOT APPLY TO REFERENCE/CONFIG DATA above).
 - get_me = the current authorized user's own staff profile. get_firm = the firm's name/URL.
@@ -434,7 +482,10 @@ REPORTS: FILTERING, EXCLUDING, AND COUNTING CASES
   2. A custom field name like "Case Type" or "Processing Agent" → call get_custom_fields() to confirm the exact field name (e.g. "CASE TYPE", "PROCESSING AGENT") to use as a custom_field_filters key or group_by value.
   3. practice_area is a builtin field — pass the value as the user said it (e.g. "Immigration"), no lookup needed.
   4. status ("open"/"closed") is a separate dimension from case_stage — a case's status and its case_stage name can disagree (e.g. status=open while sitting in a stage literally named "CLOSED"); pass both exactly as the user described them, don't assume one implies the other.
-- Then call aggregate_cases ONCE with all the resolved filters/exclusions/group_by together — its items[] result is already the complete, correctly-computed report (every field of each surviving case, plus that case's group_name/case_count); present it as-is (following the KEEP LISTING REPLIES SHORT rule above — state the count, the table is already shown), do not re-filter or re-count it yourself. Unlike get_cases/get_case, aggregate_cases already breaks each custom field out into its own column named with the real field name (e.g. "CASE TYPE") — there is no nested custom_field_values blob to unpack here.
+- Then call aggregate_cases ONCE with all the resolved filters/exclusions/group_by together — its items[] result is already the complete, correctly-computed report (every field of each surviving case, plus that case's group_name/case_count); present it as-is (following the KEEP LISTING REPLIES SHORT rule above — state the count, the table is already shown), do not re-filter or re-count it yourself. Unlike get_cases/get_case, aggregate_cases already breaks each custom field out into its own column named with the real field name (e.g. "CASE TYPE") — there is no nested custom_field_values blob to unpack here. It also already resolves `client_name` and `assigned_attorney` (from the case's clients/lead_lawyer staff) into readable columns — never present the raw `clients`/`staff` id arrays instead. The `PROCESSING AGENT` column is already whitespace-cleaned with blank/null shown as "(unassigned)" — a separate `PROCESSING AGENT (original)` column holds the untouched raw value if the user specifically wants to see it.
+- Date-range reporting ("cases opened/closed/updated between X and Y", "cases opened this quarter", etc.): pass opened_after/opened_before, closed_after/closed_before, and/or updated_after/updated_before (YYYY-MM-DD) to aggregate_cases — MyCase has no server-side filter for opened_date/closed_date at all, so these are computed exactly in Python; never try to eyeball-filter by date from a get_cases result yourself.
+- "Days in current stage" / "how long has this case been in its stage": NOT available. MyCase's public API has no case-history/timeline endpoint — the per-stage day counts shown in MyCase's own web UI ("Case Timeline by Stage" widget) are computed internally by MyCase and are not exposed here. Say so plainly if asked; do not estimate this from `updated_at` (which changes on ANY case edit, not just a stage change) and present it as if it were the real answer.
+- "Case Owner": not a real MyCase field or custom field in this account (confirmed against the actual custom field list) — if asked, say it isn't available rather than guessing or substituting a different field silently.
 
 OUTPUT FORMAT
 - For a plain listing/show request over RECORD data (cases, clients, invoices, etc.): one line — "Found X records — see the table below." Nothing more (see KEEP LISTING REPLIES SHORT above). If the user explicitly asks for a summary/breakdown/analysis on top of that, lead the human-readable identifier (case_number, invoice number, client/company name, etc.) rather than the internal numeric id when referencing specific records in your analysis.
@@ -489,6 +540,7 @@ async def run_mycase_agent(message: str, history: list[dict[str, str]] | None = 
     final_text = ""
     items_by_resource: dict[str, dict[Any, dict[str, Any]]] = {}
     resource_totals: dict[str, int] = {}
+    download_urls: list[str] = []
     count_only = _wants_count_only(message)
 
     for _ in range(_MAX_STEPS):
@@ -573,8 +625,18 @@ async def run_mycase_agent(message: str, history: list[dict[str, str]] | None = 
                     logger.error("mycase_agent_tool_failed", tool=name, error=str(exc))
                     result = {"success": False, "error": str(exc)}
 
+            if name in _DOWNLOAD_TOOLS and isinstance(result, dict) and result.get("success") is not False:
+                url = result.get("download_url")
+                if isinstance(url, str) and url:
+                    download_urls.append(url)
+
             if name not in _REFERENCE_TOOLS and isinstance(result, dict) and isinstance(result.get("items"), list) and result["items"]:
                 resource = name[4:] if name.startswith("get_") else name
+                # get_invoices_by_date -> "invoices", so a claim like "Found 4
+                # invoices" is checked against the SAME bucket get_invoices itself
+                # would have populated — otherwise _unverified_resource_claims can't
+                # find "invoices" and wrongly rejects an accurate reply as unverified.
+                resource = _RESOURCE_KEY_ALIASES.get(resource, resource)
                 bucket = items_by_resource.setdefault(resource, {})
                 for it in result["items"]:
                     if isinstance(it, dict):
@@ -652,4 +714,5 @@ async def run_mycase_agent(message: str, history: list[dict[str, str]] | None = 
                 parts.append(f"Failed: {', '.join(err_tools)}.")
             final_text = " ".join(parts) or "Done."
 
+    final_text = _strip_download_link_urls(final_text, download_urls)
     return {"success": True, "reply": final_text, "steps": steps, "model": model}

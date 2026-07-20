@@ -282,14 +282,39 @@ class MyCaseREST:
             "items": items if isinstance(items, list) else [],
         }
 
-    async def _download(self, path: str) -> dict[str, Any]:
+    async def _download(self, path: str, expires_in: str) -> dict[str, Any]:
         """Download endpoints 302-redirect to a temporary signed URL — surface it
-        rather than following the redirect (bytes shouldn't transit the LLM)."""
+        rather than following the redirect (bytes shouldn't transit the LLM).
+
+        `expires_in` is the REAL validity window per MyCase's own docs (1 minute for
+        a document's current version, 1 hour for a specific version) — included in
+        the result itself, not just the tool description, because a model reading a
+        description once amid 50+ tool schemas has repeatedly been observed to
+        hallucinate a different (usually more generous) duration when telling the
+        user, which sends them to click a link that's already expired. Once expired,
+        MyCase's underlying S3 storage returns a confusing
+        "Request specific response headers cannot be used for anonymous GET
+        requests" XML error (not an obvious "expired" message) — `note` spells that
+        out too so the model can explain it accurately instead of guessing the link
+        itself must be broken.
+        """
         headers = await self._headers()
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
             resp = await client.get(f"{_API_BASE}{path}", headers=headers)
         if resp.status_code in (301, 302, 303, 307, 308):
-            return {"success": True, "download_url": resp.headers.get("Location")}
+            return {
+                "success": True,
+                "download_url": resp.headers.get("Location"),
+                "expires_in": expires_in,
+                "note": (
+                    f"This link is only valid for {expires_in} — tell the user to click it "
+                    "right away, and state this exact expiry (do not guess a different "
+                    "duration). If it's already expired, MyCase returns an XML error like "
+                    "'Request specific response headers cannot be used for anonymous GET "
+                    "requests' when opened in a browser — that error means EXPIRED, not "
+                    "broken; just call this tool again for a fresh link."
+                ),
+            }
         if resp.status_code >= 400:
             message = self._extract_error_message(resp)
             code_text = self._ERROR_CODE_TEXT.get(resp.status_code, "")
@@ -307,6 +332,76 @@ class MyCaseREST:
         if updated_after is not None:
             p["filter[updated_after]"] = updated_after
         return p
+
+    # ── Date-precise filtering (deterministic) ──────────────────────────────────
+    # Confirmed against MyCase's own docs: filter[updated_after] is the ONLY
+    # server-side date filter on ANY list endpoint in this API (cases, invoices,
+    # expenses, time entries, events, tasks, documents, ...) — it is a floor
+    # ("created or updated after this date/time"), not an exact-date match, and it
+    # has nothing to do with invoice_date/due_date/opened_date/event start time. A
+    # request like "invoices CREATED on 20 July 2026" therefore has no server-side
+    # equivalent — reported live: get_invoices(updated_after=<that day>) correctly
+    # returned every invoice touched since then (20 rows), but the model was left to
+    # eyeball which ones were actually CREATED that day, and the chat's own result
+    # table (built straight from the raw, unfiltered tool result — see
+    # mycase-agent/page.tsx) still showed all 20, 16 of them from unrelated creation
+    # dates, even though the model's own prose correctly caught the discrepancy.
+    # Same fix pattern as aggregate_cases (Session 29): walk every page and filter
+    # EXACTLY in Python before anything reaches the model, rather than trusting the
+    # model to filter a broader raw batch in its head.
+
+    @staticmethod
+    def _date_only(value: str | None) -> str | None:
+        """First 10 chars of an ISO date/datetime string ('2026-07-20T14:05Z' ->
+        '2026-07-20'). Plain string slicing is safe and sufficient here — every
+        date this API returns is ISO 8601 with the date first, and lexicographic
+        comparison of 'YYYY-MM-DD' strings is equivalent to chronological order."""
+        if not value or not isinstance(value, str):
+            return None
+        return value[:10]
+
+    @classmethod
+    def _date_matches(cls, value: str | None, on: str | None, after: str | None, before: str | None) -> bool:
+        d = cls._date_only(value)
+        if d is None:
+            return False
+        if on and d != on:
+            return False
+        if after and d < after:
+            return False
+        if before and d > before:
+            return False
+        return True
+
+    async def _walk_all_pages(self, fetch_page, max_records: int) -> tuple[list[dict[str, Any]], bool]:
+        """fetch_page(page_token) awaits one {"items", "next_page_token"} page.
+        Returns (all items collected, truncated) — truncated is True only if
+        max_records was hit before the real last page."""
+        items: list[dict[str, Any]] = []
+        page_token: str | None = None
+        while len(items) < max_records:
+            page = await fetch_page(page_token)
+            items.extend(page.get("items", []))
+            page_token = page.get("next_page_token")
+            if not page_token:
+                return items, False
+        return items, True
+
+    async def _fetch_filtered_by_date(
+        self, fetch_page, date_field: str,
+        on: str | None, after: str | None, before: str | None, max_records: int,
+    ) -> dict[str, Any]:
+        on_d, after_d, before_d = self._date_only(on), self._date_only(after), self._date_only(before)
+        all_items, truncated = await self._walk_all_pages(fetch_page, max_records)
+        matched = [it for it in all_items if self._date_matches(it.get(date_field), on_d, after_d, before_d)]
+        return {
+            "success": True,
+            "date_field": date_field,
+            "matched_count": len(matched),
+            "records_scanned": len(all_items),
+            "truncated": truncated,
+            "items": matched,
+        }
 
     # ── Calls ────────────────────────────────────────────────────────────────────
 
@@ -549,10 +644,12 @@ class MyCaseREST:
         return await self._get_list(f"/documents/{int(document_id)}/versions")
 
     async def download_document(self, document_id: int):
-        return await self._download(f"/documents/{int(document_id)}/data")
+        return await self._download(f"/documents/{int(document_id)}/data", expires_in="1 minute")
 
     async def download_document_version(self, document_id: int, version_number: int):
-        return await self._download(f"/documents/{int(document_id)}/versions/{int(version_number)}/data")
+        return await self._download(
+            f"/documents/{int(document_id)}/versions/{int(version_number)}/data", expires_in="1 hour"
+        )
 
     # ── Events (calendar) ────────────────────────────────────────────────────────
 
@@ -596,6 +693,45 @@ class MyCaseREST:
         if only_allowed_online_payments is not None:
             params["only_allowed_online_payments"] = only_allowed_online_payments
         return await self._get_list("/invoices", params)
+
+    _INVOICE_DATE_FIELDS = {"created_at", "updated_at", "invoice_date", "due_date"}
+
+    async def get_invoices_by_date(
+        self, date_field: str = "created_at",
+        on: str | None = None, after: str | None = None, before: str | None = None,
+        only_allowed_online_payments: bool | None = None, max_invoices: int = 5000,
+    ) -> dict[str, Any]:
+        """Exact/range-filter invoices by created_at, updated_at, invoice_date, or
+        due_date. get_invoices' only server-side filter is updated_after (a floor on
+        created-OR-updated time) — it cannot express "created ON this exact day" and
+        has no relationship at all to invoice_date/due_date. This walks every page
+        and filters precisely in Python instead.
+
+        `on`/`after`/`before` are YYYY-MM-DD (a full timestamp also works — only the
+        date portion is compared). `on` is an exact-day match; `after`/`before` are
+        inclusive range bounds; combine after+before for a range.
+        """
+        if date_field not in self._INVOICE_DATE_FIELDS:
+            raise ValueError(f"date_field must be one of {sorted(self._INVOICE_DATE_FIELDS)}")
+
+        # updated_after is a safe SERVER-SIDE pre-filter (reduces pages walked) only
+        # when we're checking created_at/updated_at with a lower bound — updated_at
+        # is always >= created_at, so any invoice created on/after X necessarily has
+        # updated_at >= X too and will still be fetched. It is NOT safe for
+        # invoice_date/due_date (unrelated to when the row was last touched) or
+        # when only an upper bound (`before`) is given (we'd need the old rows).
+        updated_after_hint = (on or after) if (date_field in ("created_at", "updated_at") and not before) else None
+
+        async def fetch_page(token: str | None) -> dict[str, Any]:
+            return await self.get_invoices(
+                updated_after=updated_after_hint,
+                only_allowed_online_payments=only_allowed_online_payments,
+                page_size=1000, page_token=token,
+            )
+
+        result = await self._fetch_filtered_by_date(fetch_page, date_field, on, after, before, max_invoices)
+        result["only_allowed_online_payments"] = only_allowed_online_payments
+        return result
 
     async def get_invoice_payments(self, payable_id=None, status=None, page_size=None, page_token=None):
         params = self._page(page_size, page_token)
@@ -732,6 +868,48 @@ class MyCaseREST:
                 return None if val is None else str(val)
         return None
 
+    async def _staff_name_map(self) -> dict[int, str]:
+        """id -> "First Last" for every staff member — one paginated fetch, used to
+        resolve a case's lead_lawyer staff id to a real name (the case object itself
+        only ever returns a bare staff id, never a name)."""
+        names: dict[int, str] = {}
+        page_token: str | None = None
+        while True:
+            page = await self.get_staff(page_size=200, page_token=page_token)
+            for s in page.get("items", []):
+                sid = s.get("id")
+                if isinstance(sid, int):
+                    full = " ".join(p for p in (s.get("first_name"), s.get("last_name")) if p) or None
+                    names[sid] = full or s.get("email") or f"staff #{sid}"
+            page_token = page.get("next_page_token")
+            if not page_token:
+                break
+        return names
+
+    # Curated, admin-extensible canonicalization map for Processing Agent name
+    # variants (duplicate spellings, nicknames, etc.) — deliberately a small static
+    # dict rather than automatic fuzzy-matching: fuzzy name matching risks silently
+    # merging two DIFFERENT real people who happen to have similar names, which is a
+    # worse outcome than an occasional unmerged duplicate. Keys are matched against
+    # the whitespace-collapsed, trimmed raw value, case-insensitively. Extend this
+    # as real duplicate spellings are found in the data — it's intentionally empty
+    # by default since no confirmed duplicates have been identified yet.
+    _AGENT_ALIAS_MAP: dict[str, str] = {}
+
+    @classmethod
+    def _normalize_agent_name(cls, raw: str | None) -> str:
+        """Blank/None -> "(unassigned)". Otherwise: collapse internal whitespace
+        runs and trim (never re-case or otherwise alter real name text — that risks
+        corrupting legitimate capitalization, e.g. a name with an internal
+        capital), then apply the curated alias map if this exact cleaned value is a
+        known variant of a canonical name."""
+        if raw is None:
+            return "(unassigned)"
+        cleaned = re.sub(r"\s+", " ", str(raw)).strip()
+        if not cleaned:
+            return "(unassigned)"
+        return cls._AGENT_ALIAS_MAP.get(cleaned.lower(), cleaned)
+
     async def aggregate_cases(
         self,
         practice_area: str | None = None,
@@ -741,6 +919,11 @@ class MyCaseREST:
         group_by: str | None = None,
         status: str | None = None,
         updated_after: str | None = None,
+        updated_before: str | None = None,
+        opened_after: str | None = None,
+        opened_before: str | None = None,
+        closed_after: str | None = None,
+        closed_before: str | None = None,
         max_cases: int = 5000,
     ) -> dict[str, Any]:
         """Fetch every case matching the given filters (paginating internally,
@@ -751,13 +934,23 @@ class MyCaseREST:
         group. Returns a flat, report-ready ``items`` array —
         one row per surviving case, with EVERY field MyCase returns for that case
         (id, case_number, name, case_stage, practice_area, status, clients, staff,
-        etc. — whatever get_cases returns) as its own column. Each custom field is
-        ALSO broken out into its own column labelled with its real name (e.g. "CASE
-        TYPE", "PROCESSING AGENT") instead of being left as one nested
-        custom_field_values blob — plus that case's group's ``group_name``/
-        ``case_count``. The report-level totals (total_cases, total_groups,
-        group_by_field, report_date) are only at the top level of this result, not
-        repeated on every row.
+        etc. — whatever get_cases returns) as its own column, PLUS:
+        - ``client_name`` — resolved from the case's clients (first_name + last_name,
+          requested via field[client] expansion so no extra API calls are needed),
+          comma-joined if there's more than one client.
+        - ``assigned_attorney`` — the staff member with lead_lawyer=true, resolved to
+          a real name via one staff lookup (the case object itself only has a bare
+          staff id). "(unassigned)" if no staff member is flagged lead_lawyer.
+        - Each custom field is ALSO broken out into its own column labelled with its
+          real name (e.g. "CASE TYPE", "PROCESSING AGENT") instead of being left as
+          one nested custom_field_values blob. The "PROCESSING AGENT" field
+          specifically gets BOTH "PROCESSING AGENT (original)" (verbatim raw value)
+          AND a cleaned "PROCESSING AGENT" column (whitespace-collapsed, blank/None
+          normalized to "(unassigned)", and passed through a curated alias map for
+          any confirmed duplicate spellings — see `_AGENT_ALIAS_MAP`).
+        Plus that case's group's ``group_name``/``case_count``. The report-level
+        totals (total_cases, total_groups, group_by_field, report_date) are only at
+        the top level of this result, not repeated on every row.
 
         practice_area / custom_field_filters values match case-insensitively as a
         SUBSTRING (so filtering "Asylum" also matches "Asylum - Affirmative" and
@@ -765,8 +958,19 @@ class MyCaseREST:
         but EXACTLY (a stage name is a whole discrete value, not something to
         substring-match — "CLOSED" must not also pull in "CLOSED WITH BALANCE") —
         resolve the real stage strings via get_case_stages() first; don't guess them.
+
+        Date filters (all optional, YYYY-MM-DD, inclusive): `opened_after`/
+        `opened_before` filter on the case's opened_date; `closed_after`/
+        `closed_before` on closed_date; `updated_after`/`updated_before` on the
+        case's updated_at (updated_after is ALSO used as a server-side pre-filter
+        to reduce pages fetched, same as get_invoices_by_date's pattern — safe
+        because updated_at is never earlier than the case's own opened_date).
+        MyCase has no server-side filter for opened_date/closed_date at all, and no
+        exact/upper-bound filter for updated_at either — all of this is computed
+        client-side in Python, same reliability pattern as everything else here.
         """
         name_to_id, id_to_name = await self._custom_field_maps()
+        staff_names = await self._staff_name_map()
 
         def resolve_field(field: str) -> tuple[bool, int | str]:
             """Return (is_builtin, key) — key is the builtin field name, or the
@@ -796,11 +1000,19 @@ class MyCaseREST:
         all_cases: list[dict[str, Any]] = []
         page_token: str | None = None
         while len(all_cases) < max_cases:
-            page = await self.get_cases(status=status, updated_after=updated_after, page_size=1000, page_token=page_token)
+            page = await self.get_cases(
+                status=status, updated_after=updated_after, page_size=1000, page_token=page_token,
+                field_client="id,first_name,last_name",
+            )
             all_cases.extend(page.get("items", []))
             page_token = page.get("next_page_token")
             if not page_token:
                 break
+
+        opened_after_d, opened_before_d = self._date_only(opened_after), self._date_only(opened_before)
+        closed_after_d, closed_before_d = self._date_only(closed_after), self._date_only(closed_before)
+        updated_before_d = self._date_only(updated_before)
+        updated_after_d = self._date_only(updated_after)
 
         def matches(case: dict[str, Any]) -> bool:
             if practice_area and practice_area.strip().lower() not in (case.get("practice_area") or "").lower():
@@ -814,6 +1026,18 @@ class MyCaseREST:
                 actual = case.get(key) if is_builtin else self._case_custom_value(case, key)  # type: ignore[arg-type]
                 if not actual or want not in actual.lower():
                     return False
+            if (opened_after_d or opened_before_d) and not self._date_matches(
+                case.get("opened_date"), None, opened_after_d, opened_before_d
+            ):
+                return False
+            if (closed_after_d or closed_before_d) and not self._date_matches(
+                case.get("closed_date"), None, closed_after_d, closed_before_d
+            ):
+                return False
+            if (updated_after_d or updated_before_d) and not self._date_matches(
+                case.get("updated_at"), None, updated_after_d, updated_before_d
+            ):
+                return False
             return True
 
         survivors = [c for c in all_cases if matches(c)]
@@ -836,20 +1060,46 @@ class MyCaseREST:
 
         def expand_custom_fields(case: dict[str, Any], row: dict[str, Any]) -> None:
             """Break custom_field_values out into one column per field, named with
-            its real display name — so a report never shows a raw nested blob."""
+            its real display name — so a report never shows a raw nested blob. The
+            PROCESSING AGENT field specifically gets an extra "(original)" column
+            alongside a cleaned version of the main column — see
+            `_normalize_agent_name` for exactly what "cleaned" means (whitespace
+            collapsing + a curated alias map; never re-casing or guessing)."""
             for cfv in case.get("custom_field_values") or []:
                 cfid = (cfv.get("custom_field") or {}).get("id")
                 name = id_to_name.get(cfid) if isinstance(cfid, int) else None
                 col = name or f"custom_field_{cfid}"
                 if col in row:  # avoid clobbering a same-named builtin field
                     col = f"{col} (custom field)"
-                row[col] = cfv.get("value")
+                raw_val = cfv.get("value")
+                if name and name.strip().lower() == "processing agent":
+                    row[f"{col} (original)"] = raw_val
+                    row[col] = self._normalize_agent_name(raw_val)
+                else:
+                    row[col] = raw_val
+
+        def resolve_client_name(case: dict[str, Any]) -> str:
+            names = []
+            for cl in case.get("clients") or []:
+                full = " ".join(p for p in (cl.get("first_name"), cl.get("last_name")) if p)
+                if full:
+                    names.append(full)
+            return ", ".join(names) if names else "(none)"
+
+        def resolve_assigned_attorney(case: dict[str, Any]) -> str:
+            for s in case.get("staff") or []:
+                if s.get("lead_lawyer") is True:
+                    sid = s.get("id")
+                    return staff_names.get(sid, f"staff #{sid}") if isinstance(sid, int) else "(unassigned)"
+            return "(unassigned)"
 
         items: list[dict[str, Any]] = []
         for c in survivors:
             g = group_value(c)
             row = {k: v for k, v in c.items() if k != "custom_field_values"}
             expand_custom_fields(c, row)
+            row["client_name"] = resolve_client_name(c)
+            row["assigned_attorney"] = resolve_assigned_attorney(c)
             row["group_name"] = g
             row["case_count"] = counts[g]
             items.append(row)
@@ -882,9 +1132,30 @@ class MyCaseREST:
         padded reference number (e.g. name "01597-Smith" vs a DIFFERENT case whose
         real case_number happens to also contain "1597"), so when the user gave an
         exact number, an exact case_number match is unambiguous and must win over any
-        coincidental name substring hit. Only when there is NO exact case_number match
-        does this fall back to a substring match against case_number OR name — so the
-        caller gets back ONLY the real, intended match(es), never noise.
+        coincidental name substring hit. When there is no exact case_number/id match,
+        this tries the query as ONE whole substring against case_number OR name. If
+        THAT also finds nothing — e.g. a natural-language description like "ASYLUM
+        Case for MOISE PIERRE" — it falls back to multi-word matching: filler words
+        (case, matter, for, the, a, an, of, and, in, on, re) are stripped, and a case
+        matches if EVERY remaining significant word appears somewhere in
+        case_number + name + practice_area + that case's CASE-TYPE-classification
+        custom field value(s) (see `_CASE_TYPE_CUSTOM_FIELD_NAMES`), any order, each
+        word independently. That custom field is included at THIS tier only, and
+        deliberately as a NAMED ALLOWLIST rather than every custom field on the case
+        — confirmed live: a firm's case named e.g. "01639-Moise Pierre
+        MOISE PIERRE-IMMIGRATION" has its actual case TYPE — "Asylum" — living only
+        in a "CASE TYPE" custom field value, never in the name string at all, so a
+        query like "asylum case for moise pierre" could never match it without
+        checking that field. But checking EVERY custom field was tried first and
+        produced a real false positive: an unrelated case's "PROCESSING AGENT" field
+        happened to be "Jean-Baptiste Saint-Cyr (Moise)" (a staff nickname), which
+        alone made "moise" match a case that had nothing to do with Moise Pierre.
+        Restricting to a small, curated set of actual case-classification fields
+        avoids that whole class of coincidental hits from free-text/personnel
+        fields (agent names, reviewer notes, deadlines, etc.).
+        Requires 2+ significant words for this tier (a single leftover word after
+        stripping fillers falls through to plain substring behavior only — too weak
+        a signal to safely broaden on its own).
         """
         q = (query or "").strip().lower()
         if not q:
@@ -899,7 +1170,11 @@ class MyCaseREST:
             if not page_token:
                 break
 
+        # A purely numeric query could be either the case_number OR the case's own
+        # internal numeric id — check both before falling back to a substring match.
         exact = [c for c in all_cases if (c.get("case_number") or "").strip().lower() == q]
+        if not exact and q.isdigit():
+            exact = [c for c in all_cases if str(c.get("id")) == q]
         if exact:
             matched = exact
         else:
@@ -907,6 +1182,15 @@ class MyCaseREST:
                 return q in (c.get("case_number") or "").lower() or q in (c.get("name") or "").lower()
 
             matched = [c for c in all_cases if matches(c)]
+            if not matched:
+                words = [w for w in re.split(r"\W+", q) if w and w not in self._SEARCH_STOPWORDS]
+                if len(words) >= 2:
+                    _, id_to_name = await self._custom_field_maps()
+
+                    def multi_word_matches(c: dict[str, Any]) -> bool:
+                        return all(w in self._case_search_haystack(c, id_to_name) for w in words)
+
+                    matched = [c for c in all_cases if multi_word_matches(c)]
         return {
             "success": True,
             "query": query,
@@ -914,6 +1198,105 @@ class MyCaseREST:
             "truncated": len(all_cases) >= max_cases,
             "match_count": len(matched),
             "items": matched,
+        }
+
+    # Curated allowlist of custom field NAMES (case-insensitive) that classify what
+    # KIND of case this is — the only custom fields search_cases' multi-word fallback
+    # will read. Deliberately narrow: broader attempts (searching every custom field)
+    # produced a real false positive via a "PROCESSING AGENT" field whose value
+    # happened to contain a staff nickname that collided with a client's first name.
+    _CASE_TYPE_CUSTOM_FIELD_NAMES = {"case type", "matter type", "practice type"}
+
+    @classmethod
+    def _case_search_haystack(cls, case: dict[str, Any], id_to_name: dict[int, str]) -> str:
+        """case_number + name + practice_area + case-type custom field value(s),
+        lowercased — the search surface for search_cases' multi-word fallback tier."""
+        parts = [case.get("case_number") or "", case.get("name") or "", case.get("practice_area") or ""]
+        for cfv in case.get("custom_field_values") or []:
+            cfid = (cfv.get("custom_field") or {}).get("id")
+            fname = id_to_name.get(cfid, "") if isinstance(cfid, int) else ""
+            if fname.strip().lower() in cls._CASE_TYPE_CUSTOM_FIELD_NAMES:
+                val = cfv.get("value")
+                if val is not None:
+                    parts.append(str(val))
+        return " ".join(parts).lower()
+
+    _SEARCH_STOPWORDS = {"a", "an", "and", "the", "for", "of", "in", "on", "case", "matter", "re"}
+
+    async def get_case_invoices(
+        self, case_id: int | None = None, case_query: str | None = None,
+        only_allowed_online_payments: bool | None = None, max_invoices: int = 5000,
+    ) -> dict[str, Any]:
+        """All invoices for ONE case — resolved by an exact `case_id`, or by a loose
+        `case_query` (case_number, internal id, or name — same resolution logic as
+        search_cases). MyCase's /invoices endpoint has no server-side case filter,
+        so this walks every invoice page and matches `item.case.id` client-side —
+        but ONLY once the case itself is confirmed to be a single, real match.
+
+        If `case_query` resolves to ZERO cases, this returns immediately with
+        `matched_case: null` and an EMPTY items[] WITHOUT ever calling /invoices —
+        a real incident showed the model falling back to scanning up to 1000
+        invoices firm-wide "just in case" after a failed case search, burning
+        tokens on a guaranteed-empty result and confusing the user with an
+        irrelevant "found 1,000 invoices in the system" aside. If `case_query`
+        resolves to MORE than one case, this also returns without touching
+        invoices — `candidates` lists them so the caller can ask the user which one
+        is meant before fetching anything.
+        """
+        if case_id is None and not (case_query or "").strip():
+            raise ValueError("Provide either case_id or case_query.")
+
+        resolved_id = case_id
+        matched_case: dict[str, Any] | None = None
+
+        if resolved_id is None:
+            search = await self.search_cases(case_query)
+            items = search.get("items", [])
+            if len(items) == 0:
+                return {
+                    "success": True,
+                    "matched_case": None,
+                    "candidates": [],
+                    "note": (
+                        f"No case found matching '{case_query}' — invoices were NOT searched "
+                        "(that would be a pointless firm-wide scan with a guaranteed-empty, "
+                        "misleading result). Try searching by the client's name instead, or ask "
+                        "the user for the exact case id or case number."
+                    ),
+                    "items": [],
+                }
+            if len(items) > 1:
+                return {
+                    "success": True,
+                    "matched_case": None,
+                    "candidates": [
+                        {"id": c.get("id"), "case_number": c.get("case_number"), "name": c.get("name")}
+                        for c in items
+                    ],
+                    "note": f"'{case_query}' matched {len(items)} cases — ask the user which one before fetching invoices.",
+                    "items": [],
+                }
+            matched_case = items[0]
+            resolved_id = matched_case.get("id")
+
+        async def fetch_page(token: str | None) -> dict[str, Any]:
+            return await self.get_invoices(
+                only_allowed_online_payments=only_allowed_online_payments, page_size=1000, page_token=token,
+            )
+
+        all_invoices, truncated = await self._walk_all_pages(fetch_page, max_invoices)
+        matched_invoices = [inv for inv in all_invoices if (inv.get("case") or {}).get("id") == resolved_id]
+
+        return {
+            "success": True,
+            "matched_case": (
+                {"id": matched_case.get("id"), "case_number": matched_case.get("case_number"), "name": matched_case.get("name")}
+                if matched_case else {"id": resolved_id}
+            ),
+            "candidates": [],
+            "invoices_scanned": len(all_invoices),
+            "truncated": truncated,
+            "items": matched_invoices,
         }
 
 

@@ -7,9 +7,10 @@ tools, pagination correctness, hallucination guards, UI redesign — all summari
 `CLAUDE.md` for the full narrative session log. This file is the standalone reference for the
 feature itself.
 
-**Scope: read-only.** 46 real GET/download endpoints plus 5 deterministic tools built on top of
+**Scope: read-only.** 46 real GET/download endpoints plus 7 deterministic tools built on top of
 them (`aggregate_cases`, `search_cases`, `find_cases_with_documents`, `get_case_folder_tree`,
-`lookup_utbms_code`) — **51 tools total**. Create/update/delete operations are not implemented.
+`get_invoices_by_date`, `get_case_invoices`, `lookup_utbms_code`) — **53 tools total**.
+Create/update/delete operations are not implemented.
 
 **Core design principle, learned the hard way over many fixes:** anything that requires
 checking/aggregating/searching across MORE than a handful of records must be computed
@@ -170,12 +171,12 @@ provider credential in this app — see `CLAUDE.md` §2 for the general plaintex
 
 ---
 
-## The 51 tools
+## The 53 tools
 
-46 real MyCase GET/download endpoints + 1 static reference lookup + 4 deterministic
-search/aggregation/traversal tools, grouped by resource. Full per-endpoint schemas (params,
-response fields) are documented as docstrings in `app/mcp_servers/mycase.py`; this is just the
-inventory:
+46 real MyCase GET/download endpoints + 1 static reference lookup + 6 deterministic
+search/aggregation/traversal/date-filter tools, grouped by resource. Full per-endpoint schemas
+(params, response fields) are documented as docstrings in `app/mcp_servers/mycase.py`; this is
+just the inventory:
 
 **Cases:** `get_cases`, `get_case`, `get_client_cases`, `get_case_folder`, `get_case_folder_tree`, `get_case_documents`, `get_case_notes`
 **Case config:** `get_case_stages`, `get_case_roles`
@@ -186,7 +187,7 @@ inventory:
 **Documents:** `get_documents`, `get_document`, `get_document_versions_all`, `get_document_versions`, `download_document`, `download_document_version`
 **Folders:** `get_folder_documents`, `get_folder_subfolders`
 **Calendar:** `get_events`
-**Billing:** `get_expenses`, `get_expense`, `get_invoices`, `get_invoice_payments`, `get_time_entries`, `get_time_entry`
+**Billing:** `get_expenses`, `get_expense`, `get_invoices`, `get_invoices_by_date`, `get_invoice_payments`, `get_time_entries`, `get_time_entry`
 **Tasks:** `get_tasks`
 **Staff/firm:** `get_staff`, `get_individual_staff`, `get_me`, `get_firm`
 **Reference data:** `get_locations`, `get_practice_areas`, `get_referral_sources`, `get_people_groups`
@@ -201,14 +202,30 @@ system prompt to avoid spending tokens on a ~270-entry table every single turn.
 raw results — see the "Core design principle" note at the top):**
 - **`aggregate_cases`** — filter cases by practice area / custom field values / exact case
   stage(s) (`case_stages` to KEEP, `exclude_case_stages` to drop — both exact-match, not
-  substring), group-by-and-count (builtin field or custom field). Returns one flattened row per
-  surviving case with EVERY field (including each custom field broken into its own named column,
-  not a nested blob), plus that row's `group_name`/`case_count`. Use for ANY "count/group/
-  breakdown of cases by X" or "cases where stage is X" request.
-- **`search_cases`** — find case(s) by case_number or name. MyCase has no server-side filter for
-  either. Prioritizes an EXACT case_number match over a substring hit (a case's display *name*
-  often embeds a padded number too, e.g. "01597-Smith", which used to cause an unrelated case to
-  match and pollute the result — fixed).
+  substring) / date ranges (`opened_after`/`opened_before`, `closed_after`/`closed_before`,
+  `updated_after`/`updated_before` — all computed client-side, since MyCase has no server-side
+  filter for opened_date/closed_date at all), group-by-and-count (builtin field or custom field).
+  Returns one flattened row per surviving case with EVERY field (including each custom field
+  broken into its own named column, not a nested blob), PLUS `client_name` (resolved from the
+  case's clients) and `assigned_attorney` (resolved from the `lead_lawyer` staff member — one
+  extra `get_staff()` lookup, done once per call) — the case object itself only ever has bare
+  ids for both, never names. `PROCESSING AGENT` gets both a cleaned column (whitespace-collapsed,
+  blank/null → `"(unassigned)"`, passed through a curated alias map — see `_AGENT_ALIAS_MAP`) and
+  a `PROCESSING AGENT (original)` column with the untouched raw value. Plus that row's
+  `group_name`/`case_count`. Use for ANY "count/group/breakdown of cases by X", "cases where
+  stage is X", or date-range case report request.
+- **`search_cases`** — find case(s) by case_number, internal id, or name. MyCase has no
+  server-side filter for any of these. Resolution order: (1) exact case_number/id match wins over
+  everything (a case's display *name* often embeds a padded number too, e.g. "01597-Smith", which
+  used to cause an unrelated case to match and pollute the result — fixed); (2) the whole query as
+  one literal substring against case_number OR name; (3) if that finds nothing, multi-word
+  matching — filler words (case, matter, for, the, a, an, of, and, in, on, re) are stripped, and a
+  case matches if EVERY remaining significant word appears somewhere in case_number + name +
+  practice_area + that case's **CASE TYPE custom field value** (a small, curated allowlist of
+  field names — see the follow-up below for why it's narrow, not every custom field), in any
+  order — so a natural-language description ("ASYLUM Case for MOISE PIERRE") finds a case whose
+  literal NAME never contains the word "Asylum" at all, because that classification lives only in
+  a custom field.
 - **`find_cases_with_documents`** — "give me N cases that have documents": scans every document
   firm-wide (each document's `case` field is `{"id": N}` per MyCase's real schema), tallies real
   document counts per case, returns the N with the most. Replaces an earlier broken approach that
@@ -217,9 +234,118 @@ raw results — see the "Core design principle" note at the top):**
   recursively, to `max_depth`) with each folder's documents, in one call. For the document LIST
   itself (not structure), `get_case_documents` is simpler and already complete — this is only for
   "what does the folder structure look like" requests.
+- **`get_invoices_by_date`** — exact-day or range filter on `created_at`/`updated_at`/
+  `invoice_date`/`due_date`. `get_invoices` itself only supports `updated_after` (a floor on
+  created-OR-updated time — see "MyCase's ONE date filter" below) — this walks every page and
+  filters precisely in Python for ANY "invoices created/due/dated on|before|after X" request.
+- **`get_case_invoices`** — all invoices for ONE case, given `case_id` OR a loose `case_query`
+  (resolved exactly like `search_cases` — numeric → case_number then id; text → substring on
+  case_number/name). `get_invoices` has no server-side case filter, so this resolves the case
+  AND filters invoices in one call — critically, if `case_query` matches ZERO cases it returns
+  immediately (`matched_case: null`, empty `items`) WITHOUT ever touching `/invoices` (see
+  "No match, no fallback scan" below); if it matches MORE than one, `candidates` lists them
+  instead of guessing.
 
 For local Ollama models, the tool list is capped at 16 (keyword-priority matched against the
-user's message, mirrors the Podio agent's same pattern) — cloud models get the full 51.
+user's message, mirrors the Podio agent's same pattern) — cloud models get the full 53.
+
+### No match, no fallback scan — a real "wasted 1,000-row scan" incident
+
+Reported: "get all the invoices related to the ASYLUM Case for MOISE PIERRE" — `search_cases`
+correctly found no case matching that description (it was a loose natural-language description,
+not the case's actual name/number — a legitimate no-match, not a search bug). The model's reply
+correctly said so and even offered a good recommendation ("search by client name, or give me the
+exact case id/number") — but it ALSO, on its own initiative, called `get_invoices` and scanned up
+to 1,000 invoices firm-wide "just in case", reporting an irrelevant "I found 1,000 invoices in the
+system" aside. There was no case to filter by, so that scan was guaranteed to produce nothing
+useful — pure wasted tokens, and confusing to read.
+
+**Fix:** `get_case_invoices` (above) does case resolution and invoice filtering as ONE
+deterministic call — when the case doesn't resolve, it returns immediately with an empty
+`items[]` and never calls `/invoices` at all, so there is no raw invoice batch left lying around
+for the model to "helpfully" fall back to scanning. The system prompt also explicitly forbids
+calling `get_invoices`/`get_cases` as a fallback after a failed case lookup — a "not found" ends
+with the plain statement + recommendation (which the model was already doing right), never a
+scan of an unrelated dataset.
+
+**Also fixed while here:** `search_cases`'s query resolution only ever checked a numeric query
+against `case_number` — never the case's own internal numeric `id`. A purely numeric query is now
+checked against `case_number` first, then `id`, before falling back to a substring match — so
+"find case 41349079" (an internal id, not a case_number) now resolves correctly instead of
+silently matching nothing.
+
+**Follow-up — the SAME exact query still failed after the above fix; root-caused live against the
+real MyCase account (not a mock).** Re-running "get all invoices related to the ASYLUM Case for
+MOISE PIERRE" — and later "get all the details for the case ASYLUM Case for MOISE PIERRE" — still
+returned "No case found", even with the multi-word fallback in place. `get_case_invoices` correctly
+stopped the wasted invoice scan (that part of the fix held), but the case itself still didn't
+resolve. Rather than guess again, this was debugged with live, read-only calls against the actual
+connected MyCase account (`search_cases`, `get_case`, `get_custom_fields`) run directly from a
+one-off script, bypassing the running dev server to rule out a stale-reload question too.
+
+**Real root cause found:** the client's actual cases are `01639-Moise Pierre
+MOISE PIERRE-IMMIGRATION` (case_number 1639) and `01640-Moise Pierre MOISE PIERRE-TPS` (case_number
+1640) — both closed, and **neither name contains the word "Asylum" at all**. The first one's
+practice_area is generically "Immigration"; its actual case type — "Asylum" — lives ONLY in a
+custom field literally named **CASE TYPE**, confirmed via a direct `get_case()` call:
+`custom_field id 1130203, value "Asylum"`. So "asylum" was never a match candidate in ANY field
+`search_cases` was checking (case_number, name) — no amount of tuning the word-matching logic
+could ever have found it, since the word genuinely isn't present in either searched field.
+
+**First attempt was too broad and produced a real false positive.** Extending the multi-word
+haystack to include ALL of a case's custom field values did make the target case match — but ALSO
+matched an unrelated case, "Asylum For Richard Pierre-Saint" (case 37322645), because ITS
+`PROCESSING AGENT` custom field value happened to be `"Jean-Baptiste Saint-Cyr (Moise)"` — a staff
+member's parenthetical nickname that coincidentally contains "moise". With "asylum" (from that
+case's own real CASE TYPE), "pierre" (from its own name), and "moise" (from the unrelated staff
+nickname) all present, the AND-match fired on an entirely wrong case for entirely wrong reasons.
+
+**Final fix:** `_case_search_haystack()` now reads only `case_number` + `name` + `practice_area` +
+custom field values whose field NAME is in a small curated allowlist —
+`_CASE_TYPE_CUSTOM_FIELD_NAMES = {"case type", "matter type", "practice type"}` — deliberately
+excluding personnel/free-text fields (PROCESSING AGENT, Case Manager, QC - REVIEWER, deadlines,
+etc.) that are exactly where this kind of coincidental collision comes from. Re-verified LIVE
+against the real account: the exact reported query now returns exactly ONE match (the real Moise
+Pierre asylum case, 1639) with no false positive; a parallel "TPS case for Moise Pierre" query
+correctly returns only the OTHER Moise Pierre case (1640, TPS) and not the asylum one. Also
+regression-tested with mocks (no custom fields present): the plain multi-word name match, an
+all-filler-word query, and the single-word substring path are all unchanged.
+
+**Takeaway for future search/matching work on this codebase:** a firm's free-text custom fields
+(especially ones holding staff/agent names) are a real source of coincidental substring collisions
+once you widen a search's field surface — broadening should target NAMED, curated fields relevant
+to what's being searched, not "every field on the record," even when the immediate fix looks like
+it works on the one case you're testing.
+
+### MyCase's ONE date filter — and the systemic gap it leaves (found Session, invoices)
+
+Confirmed by reading every "Get X" endpoint in MyCase's own docs: **`filter[updated_after]` is
+the ONLY server-side date filter that exists anywhere in this API** — every single list endpoint
+(cases, invoices, expenses, time entries, events, tasks, documents, clients, leads, companies,
+calls, ...) supports it and NOTHING else. It is a floor ("created or updated after this
+date/time"), not an exact-date match, and it has no relationship at all to a resource's own
+date-ish fields (`invoice_date`, `due_date`, `opened_date`, `closed_date`, event start/end time,
+...).
+
+**Real bug this caused:** "Get all the invoices that were created on 20 July 2026" was answered
+by calling `get_invoices(updated_after=<that day>)` — which correctly returns every invoice
+*touched* (created OR updated) since then, 20 rows — but nothing then filtered that batch down to
+invoices actually *created* that day. The model's own prose partially caught it ("16 of these
+were created earlier but updated today"), yet the chat's result table — built directly from the
+raw, unfiltered tool result, not the model's text (see "Viewing results" below) — still showed
+all 20 rows regardless, 16 of them wrong for the question actually asked.
+
+**Fix:** `get_invoices_by_date` (above) does the fetch-broad-then-filter-exact pattern already
+proven by `aggregate_cases` — the model is instructed (system prompt) to use it for any
+date-specific invoice question instead of `get_invoices` + eyeballing.
+
+**Same gap exists for every other resource's own date fields** (case `opened_date`/`closed_date`,
+expense/time-entry dates, event start/end times, task `due_date`, document `created_at`, etc.) —
+none of them have a server-side exact/range filter either, only the same `updated_after` floor.
+Only invoices got a dedicated deterministic tool so far (the one that was actually reported
+wrong); the same fix pattern (`_walk_all_pages` + `_date_matches` + `_fetch_filtered_by_date`,
+all in `mycase_rest.py`) is reusable for the others in a few lines each if a similar wrong-data
+report comes in for one of them.
 
 ---
 
@@ -252,6 +378,19 @@ REST pattern as `/agent/podio/sessions`.
   and answer from its actual result instead of restating an invented number. Applied both mid-loop
   (can retry) and at the final closing-summary fallback (falls back to an honest "Completed: X.
   Failed: Y." instead of accepting a still-unverified closing reply).
+  - **Follow-up — a qualifier word between the number and the resource word slipped past the
+    regex entirely.** Reported: "Show me only active staff" / "Show me only inactive staff" each
+    got a confident reply ("Found 46 active staff members" / "Found 25 inactive staff members")
+    with NO table — meaning `get_staff` was never actually called; the numbers were invented. Root
+    cause: `_RESOURCE_CLAIM_RE` required the resource word IMMEDIATELY after the number
+    (`\d+\s+staff`), so "46 active staff" didn't match at all (the word "active" sat in between) —
+    the guard never even saw a claim to verify. Confirmed live: `"Found 46 staff members"` matched
+    the old regex, `"Found 46 active staff members"` did not. **Fixed** by allowing up to 2 filler
+    words between the number and the resource word (`\d+\s+(?:\w+\s+){0,2}staff`), so
+    "46 active staff", "25 inactive staff members", "12 unassigned tasks", etc. are now all
+    correctly caught and forced through a real tool call. Verified against the exact reported
+    phrases plus a set of regression cases (plain "46 staff members", "10 open cases", "3 overdue
+    invoices") — all still correctly detected.
 - **The old "claimed to show records but didn't" text-completeness guard was REMOVED.** It used to
   deterministically append a Markdown table to the reply whenever the model's text didn't contain
   literal record ids — a real safeguard back when the model was expected to hand-type data into
@@ -305,6 +444,83 @@ pagination bug so much as a **truncation** bug, since fixed at the root:
   clients is INCOMPLETE."* — whenever a listing request under-fetches, regardless of what the
   model's own text claims. Deliberately suppressed for pure count questions (`count_only`),
   where fetching only 1 row is correct behavior, not something to warn about.
+
+---
+
+## Immigration case reporting requirement — gap analysis and what was built
+
+A business requirement asked for an "active immigration cases" report with a specific field list
+(Case ID, Case Name, Client Name, Practice Area, Case Type, Case Status, Case Stage, Processing
+Agent, Assigned Attorney, Date Opened, Last Updated, Closed Date, Days in Current Stage, Case
+Owner), Case Stage / Processing Agent normalization, and filtering by practice area/case
+type/stage/agent/dates/status. Investigated live against the real account (not assumed) — findings
+and what was actually built:
+
+| Requirement | Status |
+|---|---|
+| Retrieve all active immigration cases | ✅ `aggregate_cases(practice_area="Immigration", status="open")` |
+| Case ID, Case Name, Practice Area, Case Status, Date Opened, Last Updated, Closed Date | ✅ already returned as-is |
+| Case Type | ✅ real custom field `CASE TYPE`, already broken out into its own column |
+| Client Name | ✅ **added** — `client_name`, resolved from the case's `clients` via `field[client]` expansion (no extra API calls) |
+| Assigned Attorney | ✅ **added** — `assigned_attorney`, resolved from the `staff` member flagged `lead_lawyer=true` via one `get_staff()` lookup (the case object only ever has a bare staff id) |
+| Processing Agent (raw) | ✅ real custom field `PROCESSING AGENT` |
+| Case Stage | ✅ — see normalization below |
+| Days in Current Stage | ❌ **Not available from MyCase's API at all** — see below. Decision: left out. |
+| Case Owner | ❌ **No such field exists** in this account's 46 custom fields (checked every one). Decision: left out rather than guess a substitute. |
+| Filtering: Practice Area, Case Type, Case Stage, Processing Agent, Status | ✅ already supported |
+| Filtering: Date Opened, Last Updated, Closed Date | ✅ **added** — `opened_after`/`opened_before`, `closed_after`/`closed_before`, `updated_after`/`updated_before` |
+
+**Case Stage normalization — the "N days" example didn't match reality.** The spec's example raw
+values (`"...ASSIGNED TO PARALEGAL 16 days"`, etc.) suggested `case_stage` embeds a live day-count
+suffix that needs stripping. Live-checked: it does not. Real `case_stage` values in this account are
+already clean fixed strings (e.g. `"IMMIGRATION- PROCESSING (ASSIGNED TO PARALEGAL)"`), confirmed
+by scanning real open cases AND the firm's 34 configured stage names (`get_case_stages()`) — none
+contain a day count. The user then supplied a screenshot showing where the day count actually comes
+from: MyCase's own web UI has a **"Case Timeline by Stage"** widget (`Days Open: 1195`, broken into
+segments like `"IMMIGRATION- PROCESSING (ASSIGNED TO ... 176 Days"`) — a separate, MyCase-internal
+computed display, not the `case_stage` API field, which shows the plain stage name with no day count
+directly underneath it in the same screenshot. So in this account, Clean Case Stage = Original Case
+Stage (no stripping needed) — a defensive regex strip is still worth keeping as a safety net in case
+a suffix ever appears in different data, but it isn't the primary gap.
+
+**Days in Current Stage — genuinely unavailable via the API, confirmed by reading every documented
+endpoint.** There is no case-history, timeline, or audit-log endpoint anywhere in MyCase's public
+API — the timeline widget in the screenshot is computed by MyCase internally and never exposed
+externally. Two options were considered and declined for now (both recorded here for when this is
+revisited):
+1. **Approximate via `updated_at`** — available immediately, no new infrastructure, but inaccurate:
+   `updated_at` changes on ANY case edit (a note, a document, a field), not just a stage change.
+2. **Build our own tracking** — a scheduled job (Celery Beat, already used elsewhere in this app)
+   periodically snapshotting each case's `case_stage`, detecting transitions, and computing real
+   elapsed days from OUR recorded transition date going forward. Accurate, but only from the day
+   tracking starts — historical stage-entry dates before that can never be recovered from MyCase.
+
+Decision made: leave this field out entirely rather than ship either an inaccurate proxy or invest
+in new infrastructure without a clear ask for it. Revisit if/when the accurate (option 2) approach
+is wanted.
+
+**Case Owner — no such field exists.** Checked the complete list of this account's 46 custom
+fields; none is named "Case Owner" or anything synonymous. The closest real concept is a `Case
+Manager` custom field (confirmed present and populated, e.g. `"Lucnise Regis"`), or the case's
+`originating_lawyer` staff flag (structurally available, same mechanism as `lead_lawyer`/Assigned
+Attorney). Decision made: leave it out rather than silently substitute one of these guesses.
+
+**Processing Agent normalization — implemented via `_normalize_agent_name()` + `_AGENT_ALIAS_MAP`
+in `mycase_rest.py`.** Blank/None → `"(unassigned)"`; otherwise whitespace is collapsed and the
+value is trimmed, then checked against a small curated alias map for known duplicate spellings.
+Deliberately NOT automatic fuzzy-matching — a live investigation this session (see the `search_cases`
+custom-field follow-up above) found a real case where a staff member's PARENTHETICAL NICKNAME in an
+unrelated custom field coincidentally matched another person's first name; the same risk applies to
+agent-name fuzzy-matching (two different real people with similar names could get silently merged).
+The alias map is empty by default and is the extensibility point — add confirmed duplicate spellings
+to it as they're found in real data, never guess them upfront. The raw value is always preserved
+alongside the cleaned one (`"PROCESSING AGENT (original)"`).
+
+**Verified:** unit-tested (mocked) client_name/assigned_attorney resolution, agent
+clean/original/unassigned handling, and all three date-range filter pairs — all correct. Re-verified
+live against the real account: a real Immigration case correctly returned `client_name: "IBRA SEYE,
+MARIAMA CHORR"`, `assigned_attorney: "LANA JOSEPH"`, `CASE TYPE: "Asylum"`, and both PROCESSING AGENT
+columns populated. 53 tools still register correctly.
 
 ---
 
@@ -380,6 +596,25 @@ firm with more custom fields than that will silently miss some on an unpaginated
 its `id` against `custom_field_values[].custom_field.id` on each record. `aggregate_cases` does
 this resolution automatically and breaks each custom field into its own named column.
 
+**Downloads render as a real button, not a link the user must click/copy.** `download_document`/
+`download_document_version` results are excluded from the record-table logic (a raw `download_url`
+used to be able to leak into a one-row table as a giant unreadable URL column) and instead render
+as a dedicated `DownloadCard` — filename (parsed from the URL's own
+`response-content-disposition`, falling back to `Document <id>`), the real expiry
+(`expires_in` — 1 minute for a document's current version, ~1 hour for a specific version, sourced
+from the tool result itself, not the model's text), and a styled `<a>` "Download" button
+(`target="_blank"`, opens the presigned URL directly — no backend proxy, bytes never transit the
+LLM). The system prompt tells the model NOT to paste the raw URL as a markdown link, but that
+alone wasn't reliable — a real transcript showed the model pasting `[Download Document](https://
+s3.amazonaws.com/...)` into its reply anyway. Backstopped deterministically in
+`mycase_agent.py`'s `_strip_download_link_urls()`: every successful `download_document`/
+`download_document_version` URL from the turn is stripped out of the final reply text (markdown
+link → just its label; a bare occurrence → removed outright) before the reply is returned, matched
+on an exact string OR the same scheme+host+path with a different query string (covers the model
+subtly retyping/mangling the long presigned URL). So even when the model ignores the prompt
+instruction, the raw URL never reaches the chat — only the button (built straight from the real
+tool result) can trigger the download.
+
 **"Show/list all documents for case X" → `get_case_documents(case_id)`, not folder-walking.** Per
 MyCase's own docs this endpoint returns EVERY document for the case, complete, in one call,
 regardless of which folder/subfolder it's filed in. The model previously defaulted to manually
@@ -403,9 +638,11 @@ for listing documents.
 | `GET /integrations/mycase/connect` returns `{"success": false, ...}` | No `mycase_client_id` configured yet — add it in Settings → MyCase first. |
 | Reply is literally `"All connection attempts failed"`, especially on a long/complex multi-tool-call query | Not a MyCase-specific issue — a transient network blip during one of the underlying LLM provider calls (`httpx.ConnectError`'s exact message). Root-caused and fixed in `model_gateway.py` (Session 26): all 4 provider chat paths now retry transient transport-level failures up to 3 times (1s/2s/4s backoff) before giving up. Longer/more complex queries make many more LLM round-trips, so they were disproportionately likely to hit this before the fix — nothing wrong with the query, token, or MyCase connection itself. |
 | A count/total in the reply doesn't match the actual table/CSV, or doesn't match a repeated question | Was a truncation bug (pagination metadata getting cut off, causing the model to fabricate a number) — see "Pagination correctness" above. Fixed; if it recurs, check whether a NEW tool built a raw dict with `items` listed before its own metadata keys, since that's the exact pattern that caused it. |
+| "Get invoices/cases/etc created|due|dated on X" returns a table with extra rows from unrelated dates, even when the reply text sounds right | MyCase's only server-side date filter is `updated_after` — see "MyCase's ONE date filter" above. For invoices, fixed via `get_invoices_by_date`. If the same shape shows up for another resource's own date field (case opened/closed date, expense/time-entry date, event time, task due_date, document created_at), it needs the same dedicated fetch-then-filter tool — `get_invoices_by_date` in `mycase_rest.py` is the template to copy. |
 | A whole-firm question ("how many clients", "list all leads") looks suspiciously specific/wrong, or a table just doesn't appear at all | Was a read-hallucination gap — the model stating a confident number with no real tool call behind it. See "Anti-hallucination measures" → the `_unverified_resource_claims` guard. If it still happens, check the logs for `mycase_agent_bad_reply_discarded` (`reason=unverified_claim`) to see whether the guard fired and the model just kept refusing to call the real tool across all `_MAX_STEPS` retries. |
 | The reply says "see the table above" | Should not happen anymore — the reply always renders BELOW the result table in the chat layout, and the system prompt was corrected throughout to say "below". If this resurfaces, grep `mycase_agent.py`'s `_SYSTEM_PROMPT` and any generated pointer text for a stray "above". |
 | `Mistral API 400: "Assistant message must have either content or tool_calls, but not none"` | A genuinely empty model turn got appended to conversation history and later re-sent. Fixed — see "Anti-hallucination measures" above (the `"(no response)"` placeholder fix, applied to both this agent and the Podio agent). |
 | `search_cases` for an exact case number returns extra, unrelated cases | Was matching the query as a substring against BOTH case_number and name — a case's display *name* often embeds a padded number too (e.g. name "01597-Smith" for an unrelated case), which could coincidentally contain the searched digits. Fixed: an exact case_number match now always wins over any substring hit. |
 | "Get me N cases that have documents" returns cases that don't actually have any | Was answered by sampling the first few cases from `get_cases` and hoping some had documents — wrong by construction. Use `find_cases_with_documents(limit=N)` instead (see "The 51 tools" above), which scans real documents and ranks cases by actual document_count. |
 | Raw pydantic validation dump reaches the user (e.g. `"1 validation error for search_casesArguments\nquery\n  Field required..."`) | `mycase_client.py`'s `call_tool()` now catches this class of error (a `ToolError` wrapping a pydantic `ValidationError`, raised when the model calls a tool with a missing/invalid required argument) and reformats it into a plain sentence, e.g. `"Invalid arguments for search_cases: 'query' is required but was not provided."` If a NEW raw dump shape reaches the user, it's likely a different exception type than `ToolError`/`ValidationError` — extend the catch in `mycase_client.py`. |
+| Clicking a "download document" link shows an XML page: `<Error><Code>InvalidRequest</Code><Message>Request specific response headers cannot be used for anonymous GET requests.</Message>...</Error>` | The link EXPIRED — not a bug in the link itself. Per MyCase's own docs, `download_document`'s signed URL is valid only **~1 minute** (`download_document_version` is ~1 hour); once expired, MyCase's S3-backed storage returns this specific (confusingly-worded) error instead of a plain "expired" message. Was previously made worse by the model hallucinating a longer, wrong expiry (e.g. "expires in 10 minutes") when relaying the link to the user, despite the correct duration already being in the tool description — models don't reliably surface a fact from a schema description read once amid 50+ tools. Fixed in `mycase_rest.py`'s `_download()`: the real `expires_in` and an explanation of this exact error are now returned INSIDE the tool result itself (fresh in context at reply time, not just the description), and the system prompt instructs the model to quote that value verbatim and tell the user to click immediately. If it still expires before the user can click, just ask the agent to generate a fresh link. |

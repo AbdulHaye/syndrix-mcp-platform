@@ -34,6 +34,54 @@ const EXAMPLES = [
   "What are my upcoming calendar events?",
 ];
 
+/** "case_number" -> "Case Number" — used both for the field-list summary and the
+ * key-value single-record view, so the two stay consistent with each other. */
+function humanizeKey(key: string): string {
+  return key
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** One-line "N records · M fields: field, field, field" summary shown above every
+ * result table — deterministic (computed straight from the real data, not the
+ * model's text) so the count/field-list can never drift from what's actually there. */
+function ResultSummary({ items, columns }: { items: RecordRow[]; columns: string[] }) {
+  return (
+    <div style={{ fontSize: "0.72rem", color: "#64748b", lineHeight: 1.5 }}>
+      <div style={{ fontWeight: 600 }}>
+        {items.length} record{items.length !== 1 ? "s" : ""} · {columns.length} field{columns.length !== 1 ? "s" : ""}
+      </div>
+      {columns.length > 0 && (
+        <div style={{ color: "#94a3b8" }}>
+          Fields: {columns.map(humanizeKey).join(", ")}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A single record shown as plain "Label: value" text (one line per field) instead
+ * of a one-row table — much easier to read than a table when there's only one
+ * result. Empty/blank values are skipped rather than shown as a bare "Label:". */
+function KeyValueView({ item }: { item: RecordRow }) {
+  const entries = Object.keys(item)
+    .map((key) => [key, flattenValue(item[key])] as const)
+    .filter(([, value]) => value !== "");
+
+  if (entries.length === 0) return null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 3, padding: "0.3rem 0" }}>
+      {entries.map(([key, value]) => (
+        <div key={key} style={{ fontSize: "0.8rem", lineHeight: 1.55, overflowWrap: "anywhere" }}>
+          <span style={{ fontWeight: 700, color: "#334155" }}>{humanizeKey(key)}:</span>{" "}
+          <span style={{ color: "#1e293b" }}>{value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function RecordsTable({ toolName, items }: { toolName: string; items: RecordRow[] }) {
   const columns = deriveColumns(items);
 
@@ -45,10 +93,8 @@ function RecordsTable({ toolName, items }: { toolName: string; items: RecordRow[
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
-      <div className="d-flex align-items-center justify-content-between">
-        <span style={{ fontSize: "0.72rem", color: "#64748b", fontWeight: 600 }}>
-          {items.length} record{items.length !== 1 ? "s" : ""} · {columns.length} column{columns.length !== 1 ? "s" : ""}
-        </span>
+      <div className="d-flex align-items-start justify-content-between" style={{ gap: 8 }}>
+        <ResultSummary items={items} columns={columns} />
         <button
           onClick={onDownload}
           style={{
@@ -124,6 +170,98 @@ function stepFailed(step: MyCaseAgentStep): boolean {
   return r?.success === false || !!r?.error;
 }
 
+// download_document / download_document_version — rendered as a dedicated
+// Download button (see DownloadCard below), never as a record table, so they're
+// excluded from stepItems/primaryResultGroups the same way reference tools are.
+const _DOWNLOAD_TOOLS = new Set(["download_document", "download_document_version"]);
+
+/** Pull the filename out of the presigned URL's own response-content-disposition
+ * query param, when present, so the button can show a real name instead of a bare
+ * tool label — best-effort only (falls back to the document id, then a generic
+ * label if even that's unavailable). */
+function extractFilename(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const cd =
+      parsed.searchParams.get("response-content-disposition") ??
+      parsed.searchParams.get("response-content-disposition".toUpperCase());
+    if (!cd) return null;
+    const decoded = decodeURIComponent(cd);
+    const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(decoded);
+    return m ? m[1].trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+interface DownloadInfo {
+  url: string;
+  expiresIn?: string;
+  label: string;
+}
+
+/** A successful download_document/download_document_version result becomes a
+ * Download button instead of relying on the model to paste a clickable markdown
+ * link in its reply — a raw presigned URL is long and easy for a weaker model to
+ * mis-render as plain text the user has to copy/paste (the exact complaint this
+ * was built to fix), and the URL is only valid for ~1 minute (~1 hour for a
+ * version), so a real one-click button matters more here than for any other
+ * result type. */
+function stepDownloadInfo(step: MyCaseAgentStep): DownloadInfo | null {
+  if (!_DOWNLOAD_TOOLS.has(step.tool)) return null;
+  if (stepFailed(step)) return null;
+  const r = stepResult(step);
+  const url = r?.download_url;
+  if (typeof url !== "string" || !url) return null;
+  const expiresIn = typeof r?.expires_in === "string" ? r.expires_in : undefined;
+  const docId = (step.args as { document_id?: unknown } | undefined)?.document_id;
+  const label = extractFilename(url) ?? (docId !== undefined && docId !== null ? `Document ${docId}` : "Document");
+  return { url, expiresIn, label };
+}
+
+function DownloadCard({ info }: { info: DownloadInfo }) {
+  return (
+    <div
+      style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+        border: "1px solid #e2e8f0", borderRadius: 10, background: "white",
+        padding: "0.6rem 0.7rem", minWidth: 0,
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: "0.8rem", fontWeight: 600, color: "#1e293b",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}
+          title={info.label}
+        >
+          {info.label}
+        </div>
+        {info.expiresIn && (
+          <div style={{ fontSize: "0.68rem", color: "#94a3b8" }}>
+            Link expires in {info.expiresIn} — download now
+          </div>
+        )}
+      </div>
+      <a
+        href={info.url}
+        target="_blank"
+        rel="noreferrer"
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 4,
+          padding: "0.35rem 0.75rem", background: "#0b6fcc", color: "#fff",
+          borderRadius: 6, fontSize: "0.75rem", fontWeight: 600,
+          textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0,
+        }}
+      >
+        <i className="bi bi-download" />
+        Download
+      </a>
+    </div>
+  );
+}
+
 /** Every non-reference tool result that carries real record data becomes table
  * rows — a proper array (get_cases/search_cases/...) as-is, OR a single-object
  * result (get_case/get_client/...) wrapped as a one-row table, so "get case X" is
@@ -131,6 +269,7 @@ function stepFailed(step: MyCaseAgentStep): boolean {
  * keys are stripped; a result with nothing left after that (e.g. just a download
  * URL) is correctly left to the model's own prose instead of a fake table. */
 function stepItems(step: MyCaseAgentStep): RecordRow[] | null {
+  if (_DOWNLOAD_TOOLS.has(step.tool)) return null;
   if (stepFailed(step)) return null;
   const r = stepResult(step);
   if (!r) return null;
@@ -168,7 +307,8 @@ const _RESOURCE_ALIASES: Record<string, string> = {
   get_document: "documents", get_documents: "documents", get_case_documents: "documents",
   get_folder_documents: "documents",
   get_case_folder: "folders", get_case_folder_tree: "folders", get_folder_subfolders: "folders",
-  get_invoice: "invoices", get_invoices: "invoices",
+  get_invoice: "invoices", get_invoices: "invoices", get_invoices_by_date: "invoices",
+  get_case_invoices: "invoices",
   get_expense: "expenses", get_expenses: "expenses",
   get_time_entry: "time_entries", get_time_entries: "time_entries",
   get_note: "notes", get_case_notes: "notes", get_client_notes: "notes",
@@ -216,6 +356,7 @@ function MessageBubble({ msg }: { msg: MyCaseChatMessage }) {
   const isUser = msg.role === "user";
   const steps = msg.steps ?? [];
   const resultGroups = isUser ? [] : primaryResultGroups(steps);
+  const downloads = isUser ? [] : steps.map(stepDownloadInfo).filter((d): d is DownloadInfo => d !== null);
 
   return (
     <div className={`d-flex ${isUser ? "justify-content-end" : "justify-content-start"}`} style={{ minWidth: 0 }}>
@@ -238,6 +379,15 @@ function MessageBubble({ msg }: { msg: MyCaseChatMessage }) {
           {isUser ? msg.content || "" : msg.content ? <Markdown content={msg.content} /> : msg.error ? "Something went wrong." : ""}
         </div>
 
+        {/* One real "Download" button per successful download_document(_version)
+            call — a deterministic click target instead of relying on the model to
+            paste a working markdown link (the link is long-lived-looking but only
+            valid ~1 minute/~1 hour, and a weaker model has been observed rendering
+            it as plain text the user had to copy/paste). */}
+        {downloads.map((d, i) => (
+          <DownloadCard key={`${d.url}-${i}`} info={d} />
+        ))}
+
         {/* The actual result data — one table + one Download CSV button per
             resource (paginated calls to the same resource are merged). Reference/
             lookup calls (case stages, custom fields, etc.) are excluded so there's
@@ -247,6 +397,12 @@ function MessageBubble({ msg }: { msg: MyCaseChatMessage }) {
             <div style={{ fontSize: "0.66rem", fontWeight: 700, color: "#334155", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.03em" }}>
               {resourceLabel(g.tool)}
             </div>
+            {g.items.length === 1 && (
+              <>
+                <KeyValueView item={g.items[0]} />
+                <div style={{ borderTop: "1px solid #f1f5f9", margin: "0.4rem 0" }} />
+              </>
+            )}
             <RecordsTable toolName={g.tool} items={g.items} />
           </div>
         ))}

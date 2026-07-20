@@ -300,6 +300,17 @@ async def get_invoices(updated_after: str | None = None, only_allowed_online_pay
     )
 
 
+@mycase_mcp.tool(name="get_invoices_by_date", description="Find invoices by an EXACT date or date range on created_at, updated_at, invoice_date, or due_date. Use this for ANY 'invoices created/due/dated on|before|after X' request — get_invoices only supports updated_after (a floor on created-OR-updated time), which is NOT the same as an exact creation date and has no relation to invoice_date/due_date at all; using get_invoices alone for a date-specific question returns the wrong set. on = exact day (YYYY-MM-DD); after/before = inclusive range bounds (combine for a range). Returns only the matching invoices, already filtered — do not filter get_invoices' raw output yourself.")
+async def get_invoices_by_date(
+    date_field: str = "created_at", on: str | None = None, after: str | None = None, before: str | None = None,
+    only_allowed_online_payments: bool | None = None, max_invoices: int | None = None,
+) -> dict:
+    kwargs = {"date_field": date_field, "on": on, "after": after, "before": before, "only_allowed_online_payments": only_allowed_online_payments}
+    if max_invoices is not None:
+        kwargs["max_invoices"] = max_invoices
+    return await _call("get_invoices_by_date", **kwargs)
+
+
 @mycase_mcp.tool(name="get_invoice_payments", description="Get all firm invoice payments viewable by the authorized user. Filter by payable_id (the invoice's id) or status (e.g. 'success', 'pending', 'failure').")
 async def get_invoice_payments(payable_id: str | None = None, status: str | None = None, page_size: int | None = None, page_token: str | None = None) -> dict:
     return await _call("get_invoice_payments", payable_id=payable_id, status=status, page_size=page_size, page_token=page_token)
@@ -431,14 +442,23 @@ async def get_webhook_subscriptions() -> dict:
         "group_by: either a builtin field (practice_area, case_stage, status, billing_type) OR "
         "a custom field NAME (e.g. 'PROCESSING AGENT') to group and count by. Defaults to "
         "practice_area if omitted.\n\n"
+        "opened_after/opened_before, closed_after/closed_before, updated_after/updated_before "
+        "(all YYYY-MM-DD, inclusive): filter on the case's opened_date/closed_date/updated_at. "
+        "MyCase has NO server-side filter for opened_date/closed_date at all — this computes "
+        "them client-side, so they are always exact regardless of dataset size.\n\n"
         "Returns a flat items[] — one row per surviving case, with EVERY field MyCase returns "
         "for that case (id, case_number, name, case_stage, practice_area, status, clients, "
-        "staff, etc.) as its own column. Custom fields are ALSO broken out into their own "
-        "column labelled with the real field name (e.g. 'CASE TYPE', 'PROCESSING AGENT') "
-        "instead of one nested blob, plus that case's group_name and the group's case_count. "
-        "Report-level totals (total_cases, total_groups, group_by_field, report_date) are "
-        "returned once at the top level, not repeated per row. Present the items as-is (each "
-        "field, including each custom field, as its own column) — no further math needed."
+        "staff, etc.) as its own column, PLUS client_name (resolved from the case's clients) "
+        "and assigned_attorney (resolved from the staff member flagged lead_lawyer=true — "
+        "'(unassigned)' if none). Custom fields are ALSO broken out into their own column "
+        "labelled with the real field name (e.g. 'CASE TYPE', 'PROCESSING AGENT') instead of "
+        "one nested blob. PROCESSING AGENT additionally gets a 'PROCESSING AGENT (original)' "
+        "column holding the raw, unmodified value — the main 'PROCESSING AGENT' column is "
+        "whitespace-cleaned and blank/null values become '(unassigned)'. Plus that case's "
+        "group_name and the group's case_count. Report-level totals (total_cases, total_groups, "
+        "group_by_field, report_date) are returned once at the top level, not repeated per row. "
+        "Present the items as-is (each field, including each custom field, as its own column) — "
+        "no further math needed."
     ),
 )
 async def aggregate_cases(
@@ -449,11 +469,18 @@ async def aggregate_cases(
     group_by: str | None = None,
     status: str | None = None,
     updated_after: str | None = None,
+    updated_before: str | None = None,
+    opened_after: str | None = None,
+    opened_before: str | None = None,
+    closed_after: str | None = None,
+    closed_before: str | None = None,
 ) -> dict:
     return await _call(
         "aggregate_cases", practice_area=practice_area, custom_field_filters=custom_field_filters,
         case_stages=case_stages, exclude_case_stages=exclude_case_stages, group_by=group_by,
-        status=status, updated_after=updated_after,
+        status=status, updated_after=updated_after, updated_before=updated_before,
+        opened_after=opened_after, opened_before=opened_before,
+        closed_after=closed_after, closed_before=closed_before,
     )
 
 
@@ -465,13 +492,23 @@ async def aggregate_cases(
         "API has NO server-side filter for case_number or name (get_cases only supports "
         "filter[status] and filter[updated_after]), so do NOT call get_cases and try to "
         "eyeball-match the case yourself from a large unfiltered page — that's unreliable and "
-        "exposes a pile of irrelevant cases. This tool walks every page internally. If query "
-        "EXACTLY matches a case_number, ONLY that case is returned (a case's display name often "
-        "embeds a padded number too, e.g. name '01597-Smith' — an exact case_number match always "
-        "wins over a coincidental name substring hit elsewhere). Otherwise it falls back to "
-        "substring matching against case_number OR name — e.g. query='Ogbuehi' matches by name. "
-        "If the query has multiple distinct parts (e.g. a name AND a topic), search the most "
-        "distinctive single term first — this does not do multi-term/fuzzy matching. Returns "
+        "exposes a pile of irrelevant cases. This tool walks every page internally. A NUMERIC "
+        "query is checked as an exact match against case_number first, then the case's own "
+        "internal numeric id (a purely numeric query is always an identifier lookup, never a "
+        "substring search). A TEXT query is matched (substring, case-insensitive) against "
+        "case_number OR name — e.g. query='Ogbuehi' matches by name. An exact case_number/id "
+        "match always wins over a coincidental name substring hit elsewhere (a case's display "
+        "name often embeds a padded number too, e.g. '01597-Smith'). "
+        "If the whole query doesn't match as one literal substring, it automatically falls back "
+        "to multi-word matching: filler words (case, matter, for, the, a, an, of, and, in, on, "
+        "re) are stripped, and a case matches if EVERY remaining significant word appears "
+        "somewhere in case_number + name + practice_area + that case's CASE TYPE custom field "
+        "value (any order) — so a natural description like 'ASYLUM Case for MOISE PIERRE' finds "
+        "a case whose NAME is just '01639-Moise Pierre MOISE PIERRE-IMMIGRATION' but whose CASE "
+        "TYPE custom field value is 'Asylum' — the word 'asylum' may genuinely not be anywhere "
+        "in the case name at all, only in that field. Still not fuzzy/typo-tolerant, and a query "
+        "needs at least 2 significant words for this fallback to trigger (a single word already "
+        "matches via plain substring). Returns "
         "match_count and cases_scanned so you know if nothing matched vs. it matched everything. "
         "query is REQUIRED — never call this with only status and no query. This tool takes ONLY "
         "query and status; it does NOT accept client_id or field_client. For a case's client "
@@ -481,6 +518,36 @@ async def aggregate_cases(
 )
 async def search_cases(query: str, status: str | None = None) -> dict:
     return await _call("search_cases", query=query, status=status)
+
+
+@mycase_mcp.tool(
+    name="get_case_invoices",
+    description=(
+        "Get ALL invoices for ONE case — the correct tool for 'invoices for case X' / "
+        "'invoices related to the ASYLUM case for MOISE PIERRE' style requests. Pass EITHER "
+        "case_id (if already known) OR case_query (a case_number, numeric case id, or case name/"
+        "description — resolved exactly like search_cases: a numeric query is checked against "
+        "case_number then id; a text query is substring-matched against case_number OR name). "
+        "get_invoices has NO server-side case filter, so this does the case lookup AND the "
+        "invoice filtering internally, in one call. "
+        "IMPORTANT: if case_query matches NO case, this returns immediately with matched_case=null "
+        "and an empty items[] — invoices are NOT scanned in that situation (there's nothing to "
+        "filter against, and doing so would waste a full firm-wide fetch for a guaranteed-empty, "
+        "misleading result). Report exactly that plainly ('no case found matching X') and suggest "
+        "an alternative (search by client name, or ask for the exact case id/case number) — do NOT "
+        "then call get_invoices yourself to keep looking; that repeats the exact mistake this tool "
+        "exists to prevent. If case_query matches MULTIPLE cases, `candidates` lists them — ask the "
+        "user which one before doing anything else."
+    ),
+)
+async def get_case_invoices(
+    case_id: int | None = None, case_query: str | None = None,
+    only_allowed_online_payments: bool | None = None, max_invoices: int | None = None,
+) -> dict:
+    kwargs = {"case_id": case_id, "case_query": case_query, "only_allowed_online_payments": only_allowed_online_payments}
+    if max_invoices is not None:
+        kwargs["max_invoices"] = max_invoices
+    return await _call("get_case_invoices", **kwargs)
 
 
 # ── UTBMS code reference (static lookup, not a MyCase API endpoint) ──────────────
