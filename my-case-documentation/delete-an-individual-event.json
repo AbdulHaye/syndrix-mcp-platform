@@ -1,0 +1,11 @@
+{
+  "name": "Delete an Individual Event",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/acb8ba76b49c3-delete-an-individual-event",
+  "method": "DELETE",
+  "path": null,
+  "description": "Allows you to delete a specfic event, based on the authorized user/firm priviledges.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Delete an Individual Event\nDELETE\nhttps://external-integrations.mycase.com/v1/events/{id}\n\nAllows you to delete a specfic event, based on the authorized user/firm priviledges.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the event you want to view or update.\n\nResponses\n204\n\nNo Content\n\nRequest Sample: Shell / cURL\ncurl --request DELETE \\\n  --url https://external-integrations.mycase.com/v1/events/{id} \\\n  --header 'Content-Type: application/json'"
+}

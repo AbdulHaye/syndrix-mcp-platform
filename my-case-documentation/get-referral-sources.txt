@@ -1,0 +1,90 @@
+Get Referral Sources
+GET
+https://external-integrations.mycase.com/v1/referral_sources
+
+Get all firm referral sources viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+
+OK
+
+Headers
+Item-Count
+number
+
+The total number of results.
+
+Link
+string
+
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+application/json
+application/json
+responses
+/
+200
+array of:
+id
+number
+
+A unique identifier for this resource.
+
+name
+string
+
+The name of the referral source.
+
+created_at
+string
+
+The date this resource was created in ISO 8601 date/time format.
+
+updated_at
+string
+
+The date this resource was updated in ISO 8601 date/time format.
+
+Request Sample: Shell / cURL
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/referral_sources \
+  --header 'Accept: application/json'
+Response Example
+1
+[
+2
+  {
+3
+    "id": 0,
+4
+    "name": "string",
+5
+    "created_at": "string",
+6
+    "updated_at": "string"
+7
+  }
+8
+]

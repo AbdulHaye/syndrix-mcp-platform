@@ -1,0 +1,65 @@
+Create a People Group
+POST
+https://external-integrations.mycase.com/v1/people_groups
+
+Create a people group.
+
+Request
+Body
+application/json
+application/json
+name
+string
+required
+
+The name of the people group.
+
+Responses
+201
+
+Created
+
+Body
+application/json
+application/json
+id
+number
+
+A unique identifier for the people group.
+
+name
+string
+
+The name of the people group.
+
+created_at
+string
+
+The date the people group was created in ISO 8601 date/time format.
+
+updated_at
+string
+
+The date the people group was updated in ISO 8601 date/time format.
+
+Request Sample: Shell / cURL
+curl --request POST \
+  --url https://external-integrations.mycase.com/v1/people_groups \
+  --header 'Accept: application/json' \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "name": "string"
+}'
+Response Example
+1
+{
+2
+  "id": 0,
+3
+  "name": "string",
+4
+  "created_at": "string",
+5
+  "updated_at": "string"
+6
+}

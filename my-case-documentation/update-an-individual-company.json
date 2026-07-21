@@ -1,0 +1,11 @@
+{
+  "name": "Update an Individual Company",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/9c34394b727aa-update-an-individual-company",
+  "method": "PUT",
+  "path": null,
+  "description": "Allows you to edit a specfic company, based on the authorized user/firm priviledges.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Update an Individual Company\nPUT\nhttps://external-integrations.mycase.com/v1/companies/{id}\n\nAllows you to edit a specfic company, based on the authorized user/firm priviledges.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the company you want to view or update.\n\nBody\napplication/json\napplication/json\nname\nstring\nrequired\nemail\nstring\nwebsite\nstring\nmain_phone_number\nstring\nfax_phone_number\nstring\naddress\nAddressRequest\n\nIf you provide any address object then all address properties need to be included.\n\naddress1\nstring\naddress2\nstring\ncity\nstring\nstate\nstring\nzip_code\nstring\ncountry\nstring\nnotes\nstring\n\nAny additional information you want to keep on this company. It is seen by other firm members, but is not visible to clients.\n\ncases\narray[object]\nid\ninteger\nclients\narray[object]\nid\ninteger\ncustom_field_values\narray[CustomFieldValueRequest]\ncustom_field\nobject\nrequired\n\nThe custom field that this value is associated with.\n\nvalue\nstring or number or boolean\nrequired\n\nThe value of this custom field.\n\nResponses\n204\n\nNo Content\n\nRequest Sample: Shell / cURL\ncurl --request PUT \\\n  --url https://external-integrations.mycase.com/v1/companies/{id} \\\n  --header 'Content-Type: application/json' \\\n  --data '{\n  \"name\": \"string\",\n  \"email\": \"string\",\n  \"website\": \"string\",\n  \"main_phone_number\": \"string\",\n  \"fax_phone_number\": \"string\",\n  \"address\": {\n    \"address1\": \"string\",\n    \"address2\": \"string\",\n    \"city\": \"string\",\n    \"state\": \"string\",\n    \"zip_code\": \"string\",\n    \"country\": \"string\"\n  },\n  \"notes\": \"string\",\n  \"cases\": [\n    {\n      \"id\": 0\n    }\n  ],\n  \"clients\": [\n    {\n      \"id\": 0\n    }\n  ],\n  \"custom_field_values\": [\n    {\n      \"custom_field\": {\n        \"id\": 0\n      },\n      \"value\": \"string\"\n    }\n  ]\n}'"
+}

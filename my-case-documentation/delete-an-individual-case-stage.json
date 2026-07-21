@@ -1,0 +1,11 @@
+{
+  "name": "Delete an Individual Case Stage",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/82ee08e3b4ba1-delete-an-individual-case-stage",
+  "method": "DELETE",
+  "path": null,
+  "description": "Allows you to delete a specfic case stage, based on the authorized user/firm priviledges.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Delete an Individual Case Stage\nDELETE\nhttps://external-integrations.mycase.com/v1/case_stages/{id}\n\nAllows you to delete a specfic case stage, based on the authorized user/firm priviledges.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the case stage you want to view or update.\n\nResponses\n204\n\nNo Content\n\nRequest Sample: Shell / cURL\ncurl --request DELETE \\\n  --url https://external-integrations.mycase.com/v1/case_stages/{id} \\\n  --header 'Content-Type: application/json'"
+}

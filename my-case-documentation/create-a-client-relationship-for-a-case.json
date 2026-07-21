@@ -1,0 +1,11 @@
+{
+  "name": "Create a Client Relationship for a Case",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/2231b17f9f2e9-create-a-client-relationship-for-a-case",
+  "method": "POST",
+  "path": null,
+  "description": "Create a client relationship for a specified case.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Create a Client Relationship for a Case\nPOST\nhttps://external-integrations.mycase.com/v1/cases/{id}/relationships/clients\n\nCreate a client relationship for a specified case.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the case you want to add clients to.\n\nBody\napplication/json\napplication/json\nclients\narray[object]\n\nA list of clients to add to the case.\n\nid\ninteger\nrole\nstring\n\nThe case role for this client on this case. If this matches a case role the firm already has created, that role will be used. If this does not match any case roles of the firm, a new case role will be created and that role will be used. (case insensitive)\n\nResponses\n204\n\nNo Content\n\nRequest Sample: Shell / cURL\ncurl --request POST \\\n  --url https://external-integrations.mycase.com/v1/cases/{id}/relationships/clients \\\n  --header 'Content-Type: application/json' \\\n  --data '{\n  \"clients\": [\n    {\n      \"id\": 0,\n      \"role\": \"string\"\n    }\n  ]\n}'"
+}

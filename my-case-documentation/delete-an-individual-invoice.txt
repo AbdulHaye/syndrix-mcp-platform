@@ -1,0 +1,23 @@
+Delete an Individual Invoice
+DELETE
+https://external-integrations.mycase.com/v1/invoices/{id}
+
+Allows you to delete a specfic invoice, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the invoice you want to view or update.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request DELETE \
+  --url https://external-integrations.mycase.com/v1/invoices/{id} \
+  --header 'Content-Type: application/json'

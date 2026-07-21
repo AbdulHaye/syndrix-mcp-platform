@@ -172,6 +172,48 @@ class MyCaseREST:
     async def is_connected(self) -> bool:
         return bool(await get_setting("mycase_access_token"))
 
+    async def connection_status(self) -> dict[str, Any]:
+        """Richer than is_connected() — a real incident showed the UI's "MyCase
+        connected" badge staying up unchanged even after the stored token had
+        actually expired, because is_connected() only checks that SOME token
+        string is present, never whether it's still valid. This exposes the real
+        expiry (when known) so the UI can show a live countdown / an honest
+        "expired" state instead of a static badge that can silently lie.
+
+        Does NOT trigger a refresh — this is a cheap, side-effect-free read of
+        currently stored settings; the real refresh already happens transparently
+        in _get_valid_token() before any actual MyCase API call.
+        """
+        token = await get_setting("mycase_access_token")
+        refresh_token = await get_setting("mycase_refresh_token")
+        expiry_raw = await get_setting("mycase_token_expiry")
+
+        expires_at: int | None = None
+        expires_in_seconds: int | None = None
+        expired = False
+        if expiry_raw:
+            try:
+                expires_at = int(expiry_raw)
+                expires_in_seconds = expires_at - int(time.time())
+                expired = expires_in_seconds <= 0
+            except ValueError:
+                expires_at = None
+
+        return {
+            "connected": bool(token),
+            # expires_at/expires_in_seconds are null when the expiry is genuinely
+            # unknown — e.g. a manually-pasted access token with no accompanying
+            # refresh token, which _store_token() never got an expires_in for.
+            "expires_at": expires_at,
+            "expires_in_seconds": expires_in_seconds,
+            "expired": expired,
+            # Whether a refresh_token is on file — if True, an "expired" token
+            # above will transparently self-heal on the next real MyCase call
+            # (see _get_valid_token()); if False, "expired" means the connection
+            # is genuinely dead until the user reconnects or pastes a fresh token.
+            "auto_renews": bool(refresh_token),
+        }
+
     async def disconnect(self) -> None:
         for key in ("mycase_access_token", "mycase_refresh_token", "mycase_token_expiry"):
             await upsert_setting(key, None)
@@ -351,6 +393,22 @@ class MyCaseREST:
     # model to filter a broader raw batch in its head.
 
     @staticmethod
+    def _as_float(value: Any) -> float:
+        """MyCase's docs type invoice amounts (total_amount/paid_amount) as
+        'number', but a real account has been observed returning them as strings
+        (e.g. "500.0") — a bare arithmetic op on the raw value then raises
+        TypeError. Tolerates str/int/float/None uniformly; an unparseable value
+        degrades to 0.0 rather than raising."""
+        if value is None:
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        try:
+            return float(str(value).strip())
+        except ValueError:
+            return 0.0
+
+    @staticmethod
     def _date_only(value: str | None) -> str | None:
         """First 10 chars of an ISO date/datetime string ('2026-07-20T14:05Z' ->
         '2026-07-20'). Plain string slicing is safe and sufficient here — every
@@ -372,6 +430,81 @@ class MyCaseREST:
         if before and d > before:
             return False
         return True
+
+    # Shared safety ceiling for every dynamic scan cap below. Confirmed LIVE
+    # against the real connected account (Session 34): 7,216 total cases and
+    # 48,161 total documents — both comfortably past the various fixed guesses
+    # (5000 for cases/invoices, 20000 for documents) that used to be hardcoded
+    # here, which is exactly why "find case X" / "N cases and their invoices" /
+    # "cases with documents" kept silently missing real, existing records. Raised
+    # from the earlier 50000 (invoices-only) ceiling for headroom above the
+    # observed 48k-document scale.
+    _SCAN_HARD_CEILING = 100000
+
+    @classmethod
+    def _cap_from_probe(cls, requested: int | None, probe: dict[str, Any]) -> tuple[int, bool]:
+        """Turns a cheap page_size=1 probe's item_count into a scan cap sized to
+        the REAL total instead of a fixed guess. Returns (cap, probe_ok) —
+        probe_ok is False when the probe didn't return a usable item_count (seen
+        live on /invoices, even though the same Item-Count header works reliably
+        on /cases and /documents); callers log that themselves so the log line
+        can name which resource's probe failed. An explicit `requested` cap
+        always short-circuits to itself, no probe call needed."""
+        if requested is not None:
+            return requested, True
+        total = probe.get("item_count")
+        if isinstance(total, int) and total > 0:
+            return min(total, cls._SCAN_HARD_CEILING), True
+        return cls._SCAN_HARD_CEILING, False
+
+    async def _invoice_scan_cap(
+        self, requested: int | None, only_allowed_online_payments: bool | None = None,
+        updated_after: str | None = None,
+    ) -> int:
+        """Sizes an invoice page-walk to the REAL total via a cheap page_size=1
+        probe (using the SAME filters the real walk will use, so the probed total
+        matches what's actually being walked) instead of trusting a fixed guess —
+        a fixed cap silently under-fetches once there are more matching invoices
+        than the guess (confirmed live: a real account with >5000 invoices had
+        4 of 5 requested cases' invoices sitting past a hardcoded 5000 cutoff).
+        Shared by aggregate_cases(include_invoices=True), get_case_invoices, and
+        get_invoices_by_date — all three independently had this exact gap."""
+        if requested is not None:
+            return requested
+        probe = await self.get_invoices(
+            page_size=1, only_allowed_online_payments=only_allowed_online_payments, updated_after=updated_after,
+        )
+        cap, ok = self._cap_from_probe(requested, probe)
+        if not ok:
+            logger.warning("mycase_scan_cap_probe_missing_item_count", resource="invoices", probe_keys=list(probe.keys()))
+        return cap
+
+    async def _case_scan_cap(self, requested: int | None, status: str | None = None) -> int:
+        """Same idea as _invoice_scan_cap, for the full-case-list walk used by
+        search_cases/aggregate_cases. Confirmed live: this real account has 7,216
+        total cases — well past the old hardcoded 5000-case cap — so a case
+        created/ordered past position 5000 (e.g. "Asylum Case For Berette Desir")
+        was silently invisible to search_cases regardless of how exactly the
+        query matched its name, because it was never even in the scanned batch."""
+        if requested is not None:
+            return requested
+        probe = await self.get_cases(page_size=1, status=status)
+        cap, ok = self._cap_from_probe(requested, probe)
+        if not ok:
+            logger.warning("mycase_scan_cap_probe_missing_item_count", resource="cases", probe_keys=list(probe.keys()))
+        return cap
+
+    async def _document_scan_cap(self, requested: int | None) -> int:
+        """Same idea, for the firm-wide document walk in find_cases_with_documents.
+        Confirmed live: this real account has 48,161 total documents — past the
+        old hardcoded 20000-document cap."""
+        if requested is not None:
+            return requested
+        probe = await self.get_documents(page_size=1)
+        cap, ok = self._cap_from_probe(requested, probe)
+        if not ok:
+            logger.warning("mycase_scan_cap_probe_missing_item_count", resource="documents", probe_keys=list(probe.keys()))
+        return cap
 
     async def _walk_all_pages(self, fetch_page, max_records: int) -> tuple[list[dict[str, Any]], bool]:
         """fetch_page(page_token) awaits one {"items", "next_page_token"} page.
@@ -590,7 +723,7 @@ class MyCaseREST:
     async def get_document(self, document_id: int):
         return await self._get_one(f"/documents/{int(document_id)}")
 
-    async def find_cases_with_documents(self, limit: int = 5, max_documents: int = 20000) -> dict[str, Any]:
+    async def find_cases_with_documents(self, limit: int = 5, max_documents: int | None = None) -> dict[str, Any]:
         """Find cases that actually HAVE documents attached — MyCase has no server-
         side filter for this, so the naive approach (sample a few cases, hope some
         have documents) gives wrong/incomplete answers, the same class of problem
@@ -598,15 +731,22 @@ class MyCaseREST:
         of get_documents() firm-wide (each document's ``case`` field is ``{"id": N}``
         per MyCase's schema), tallies how many documents belong to each case, then
         fetches full case details for the ``limit`` cases with the MOST documents.
+
+        max_documents defaults to the REAL total document count (via a cheap
+        probe — see _document_scan_cap), not a fixed guess — confirmed live this
+        account has 48,161 total documents, well past the old hardcoded 20000 cap
+        that used to silently under-count which cases actually have the most.
         """
-        all_docs: list[dict[str, Any]] = []
-        page_token: str | None = None
-        while len(all_docs) < max_documents:
-            page = await self.get_documents(page_size=1000, page_token=page_token)
-            all_docs.extend(page.get("items", []))
-            page_token = page.get("next_page_token")
-            if not page_token:
-                break
+        doc_cap = await self._document_scan_cap(max_documents)
+
+        async def fetch_doc_page(token: str | None) -> dict[str, Any]:
+            return await self.get_documents(page_size=1000, page_token=token)
+
+        # _walk_all_pages reports truncation correctly via page_token — see
+        # search_cases' identical comment for why a len(...) >= cap comparison is
+        # now wrong essentially every time, since doc_cap equals the real total
+        # for most firms.
+        all_docs, documents_truncated = await self._walk_all_pages(fetch_doc_page, doc_cap)
 
         counts: dict[int, int] = {}
         for d in all_docs:
@@ -629,7 +769,7 @@ class MyCaseREST:
         return {
             "success": True,
             "documents_scanned": len(all_docs),
-            "documents_truncated": len(all_docs) >= max_documents,
+            "documents_truncated": documents_truncated,
             "distinct_cases_with_documents": len(counts),
             "match_count": len(cases),
             "items": cases,
@@ -699,7 +839,7 @@ class MyCaseREST:
     async def get_invoices_by_date(
         self, date_field: str = "created_at",
         on: str | None = None, after: str | None = None, before: str | None = None,
-        only_allowed_online_payments: bool | None = None, max_invoices: int = 5000,
+        only_allowed_online_payments: bool | None = None, max_invoices: int | None = None,
     ) -> dict[str, Any]:
         """Exact/range-filter invoices by created_at, updated_at, invoice_date, or
         due_date. get_invoices' only server-side filter is updated_after (a floor on
@@ -710,6 +850,15 @@ class MyCaseREST:
         `on`/`after`/`before` are YYYY-MM-DD (a full timestamp also works — only the
         date portion is compared). `on` is an exact-day match; `after`/`before` are
         inclusive range bounds; combine after+before for a range.
+
+        `max_invoices` defaults to the real (possibly pre-filtered by
+        updated_after) total via a cheap probe — see `_invoice_scan_cap` — not a
+        fixed guess, so a firm with more invoices than a hardcoded cap doesn't
+        silently miss matches sitting past it.
+
+        `only_allowed_online_payments` defaults to False here (match ALL invoices in
+        the date range) — NOT MyCase's own server default of True, which silently
+        excludes invoices with online payments disabled from the result entirely.
         """
         if date_field not in self._INVOICE_DATE_FIELDS:
             raise ValueError(f"date_field must be one of {sorted(self._INVOICE_DATE_FIELDS)}")
@@ -721,17 +870,146 @@ class MyCaseREST:
         # invoice_date/due_date (unrelated to when the row was last touched) or
         # when only an upper bound (`before`) is given (we'd need the old rows).
         updated_after_hint = (on or after) if (date_field in ("created_at", "updated_at") and not before) else None
+        effective_online_filter = only_allowed_online_payments if only_allowed_online_payments is not None else False
 
         async def fetch_page(token: str | None) -> dict[str, Any]:
             return await self.get_invoices(
                 updated_after=updated_after_hint,
-                only_allowed_online_payments=only_allowed_online_payments,
+                only_allowed_online_payments=effective_online_filter,
                 page_size=1000, page_token=token,
             )
 
-        result = await self._fetch_filtered_by_date(fetch_page, date_field, on, after, before, max_invoices)
-        result["only_allowed_online_payments"] = only_allowed_online_payments
+        invoice_cap = await self._invoice_scan_cap(
+            max_invoices, only_allowed_online_payments=effective_online_filter, updated_after=updated_after_hint,
+        )
+        result = await self._fetch_filtered_by_date(fetch_page, date_field, on, after, before, invoice_cap)
+        result["only_allowed_online_payments"] = effective_online_filter
         return result
+
+    # Real MyCase invoice status values (confirmed from the docs — Session 22):
+    # overdue | paid | partial | draft | unsent | sent | forwarded.
+    _INVOICE_STATUSES = {"overdue", "paid", "partial", "draft", "unsent", "sent", "forwarded"}
+
+    async def aggregate_invoices(
+        self,
+        status: str | None = None,
+        paid: bool | None = None,
+        min_balance_due: float | None = None,
+        invoice_date_after: str | None = None,
+        invoice_date_before: str | None = None,
+        due_date_after: str | None = None,
+        due_date_before: str | None = None,
+        sort_by: str = "balance_due",
+        limit: int | None = None,
+        only_allowed_online_payments: bool | None = None,
+        max_invoices: int | None = None,
+    ) -> dict[str, Any]:
+        """Filter/sort/limit invoices FIRM-WIDE — the invoice equivalent of
+        aggregate_cases, and for the exact same reason: get_invoices has NO
+        server-side filter for status or balance-due at all (only updated_after),
+        so a request like "top 100 unpaid invoices" has no targeted endpoint to
+        call. A real incident: asked for "top 100 invoices that are unpaid", the
+        model called plain get_invoices(page_size=100) — the first 100 invoices
+        in whatever order MyCase returns them, UNFILTERED, several of which were
+        already fully paid. Use this instead of get_invoices for ANY "N invoices
+        where status/paid is X" or "invoices sorted by Y" request.
+
+        `status`: exact match (case-insensitive) against one of MyCase's real
+        invoice statuses — overdue, paid, partial, draft, unsent, sent, forwarded.
+        `paid`: a convenience filter on balance_due (total_amount - paid_amount):
+        True = fully paid (balance_due <= 0), False = NOT fully paid — this is
+        what "unpaid" means in a request like "unpaid invoices" or "invoices that
+        haven't been paid" (covers overdue/partial/draft/unsent/sent/forwarded in
+        one filter, not just status="overdue"). Combine `status` and `paid` if the
+        user is specific about both (e.g. "overdue invoices that are unpaid" — a
+        no-op combo since overdue implies unpaid, but harmless).
+        `min_balance_due`: only invoices owing at least this much.
+        `invoice_date_after`/`invoice_date_before`, `due_date_after`/
+        `due_date_before` (YYYY-MM-DD, inclusive): same date-range filtering as
+        get_invoices_by_date, available here too so a single call can combine a
+        status/paid filter with a date range instead of needing two tools.
+        `sort_by`: "balance_due" (default, DESCENDING — largest amount owed
+        first, the usual meaning of "top N unpaid invoices"), "due_date"
+        (ASCENDING — the oldest/most-overdue due date first), or "invoice_date"
+        (DESCENDING — most recently invoiced first).
+        `limit`: caps `items` to the first N sorted/filtered rows — total_invoices
+        still reports the TRUE full-match count regardless of limit.
+
+        Each returned row is a real invoice with total_amount/paid_amount
+        normalized to floats (see _as_float — this account has been observed
+        returning them as strings) plus a computed `balance_due` column.
+        `only_allowed_online_payments` defaults to False (match ALL invoices,
+        not just the online-payable subset) — same reasoning as every other
+        invoice tool here.
+        """
+        if status is not None and status.strip().lower() not in self._INVOICE_STATUSES:
+            raise ValueError(f"status must be one of {sorted(self._INVOICE_STATUSES)}, got {status!r}")
+        if sort_by not in ("balance_due", "due_date", "invoice_date"):
+            raise ValueError("sort_by must be one of 'balance_due', 'due_date', 'invoice_date'")
+
+        effective_online_filter = only_allowed_online_payments if only_allowed_online_payments is not None else False
+        invoice_cap = await self._invoice_scan_cap(max_invoices, only_allowed_online_payments=effective_online_filter)
+
+        async def fetch_page(token: str | None) -> dict[str, Any]:
+            return await self.get_invoices(page_size=1000, page_token=token, only_allowed_online_payments=effective_online_filter)
+
+        all_invoices, truncated = await self._walk_all_pages(fetch_page, invoice_cap)
+
+        status_l = status.strip().lower() if status else None
+        invoice_after_d, invoice_before_d = self._date_only(invoice_date_after), self._date_only(invoice_date_before)
+        due_after_d, due_before_d = self._date_only(due_date_after), self._date_only(due_date_before)
+
+        rows: list[dict[str, Any]] = []
+        for inv in all_invoices:
+            total = self._as_float(inv.get("total_amount"))
+            paid_amt = self._as_float(inv.get("paid_amount"))
+            row = {**inv, "total_amount": total, "paid_amount": paid_amt, "balance_due": round(total - paid_amt, 2)}
+            rows.append(row)
+
+        def matches(r: dict[str, Any]) -> bool:
+            if status_l and (r.get("status") or "").strip().lower() != status_l:
+                return False
+            if paid is True and r["balance_due"] > 0.005:
+                return False
+            if paid is False and r["balance_due"] <= 0.005:
+                return False
+            if min_balance_due is not None and r["balance_due"] < min_balance_due:
+                return False
+            if (invoice_after_d or invoice_before_d) and not self._date_matches(
+                r.get("invoice_date"), None, invoice_after_d, invoice_before_d
+            ):
+                return False
+            if (due_after_d or due_before_d) and not self._date_matches(
+                r.get("due_date"), None, due_after_d, due_before_d
+            ):
+                return False
+            return True
+
+        survivors = [r for r in rows if matches(r)]
+
+        # balance_due/invoice_date: biggest/newest first (descending). due_date:
+        # oldest first (ascending) — the earliest due date is the most overdue /
+        # highest priority, which is what "top" means for a due-date sort.
+        if sort_by == "due_date":
+            survivors.sort(key=lambda r: r.get("due_date") or "9999-99-99")
+        elif sort_by == "invoice_date":
+            survivors.sort(key=lambda r: r.get("invoice_date") or "", reverse=True)
+        else:
+            survivors.sort(key=lambda r: r["balance_due"], reverse=True)
+
+        total_matching = len(survivors)
+        display = survivors[:limit] if limit is not None else survivors
+
+        return {
+            "success": True,
+            "total_invoices": total_matching,
+            "invoices_scanned": len(all_invoices),
+            "truncated": truncated,
+            "invoices_shown": len(display),
+            "limited": limit is not None and len(display) < total_matching,
+            "sort_by": sort_by,
+            "items": display,
+        }
 
     async def get_invoice_payments(self, payable_id=None, status=None, page_size=None, page_token=None):
         params = self._page(page_size, page_token)
@@ -924,7 +1202,9 @@ class MyCaseREST:
         opened_before: str | None = None,
         closed_after: str | None = None,
         closed_before: str | None = None,
-        max_cases: int = 5000,
+        max_cases: int | None = None,
+        limit: int | None = None,
+        include_invoices: bool = False,
     ) -> dict[str, Any]:
         """Fetch every case matching the given filters (paginating internally,
         server-side) — including case_stages (keep ONLY cases in one of these exact
@@ -935,6 +1215,27 @@ class MyCaseREST:
         one row per surviving case, with EVERY field MyCase returns for that case
         (id, case_number, name, case_stage, practice_area, status, clients, staff,
         etc. — whatever get_cases returns) as its own column, PLUS:
+
+        ``limit`` — when the user asked for a SPECIFIC NUMBER of cases ("show me 5
+        immigration cases", "list 10 open cases"), pass it here rather than trying to
+        eyeball-truncate the result yourself. Applied LAST, after every filter and
+        after group_name/case_count are computed on the FULL matching set — so
+        ``total_cases``/``total_groups``/each row's ``case_count`` always reflect the
+        true totals, while ``items``/``cases_shown`` reflect only the first ``limit``
+        rows actually returned. Without ``limit``, ALL matching cases are returned
+        (existing behavior, unchanged).
+
+        ``include_invoices`` — when the user wants each case's invoices too ("...and
+        their invoices", "with billing info"), set this instead of separately calling
+        get_case_invoices once per case. This fetches every firm invoice ONE time
+        (regardless of how many cases matched) and attaches each surviving case's own
+        invoices directly onto its row: ``invoice_count``, ``outstanding_invoice_total``
+        (sum of unpaid balances), and ``invoices`` (each with id, invoice_number,
+        status, invoice_date, due_date, total_amount, paid_amount, balance_due, and a
+        ready-to-read ``label``). Calling get_case_invoices in a loop instead re-walks
+        MyCase's entire invoice list from scratch on EVERY case — slow, and each call
+        is a separate step the model can forget to make for every case; this does the
+        whole thing in one deterministic pass.
         - ``client_name`` — resolved from the case's clients (first_name + last_name,
           requested via field[client] expansion so no extra API calls are needed),
           comma-joined if there's more than one client.
@@ -997,17 +1298,22 @@ class MyCaseREST:
 
         # Walk every page server-side — this is exactly what avoids truncation:
         # nothing here is exposed to the LLM until after filtering/grouping below.
-        all_cases: list[dict[str, Any]] = []
-        page_token: str | None = None
-        while len(all_cases) < max_cases:
-            page = await self.get_cases(
-                status=status, updated_after=updated_after, page_size=1000, page_token=page_token,
+        # case_cap is sized to the REAL total case count (see _case_scan_cap) —
+        # confirmed live this account has 7,216 cases, well past the old fixed
+        # 5000-case guess that used to silently truncate this exact walk.
+        case_cap = await self._case_scan_cap(max_cases, status=status)
+
+        async def fetch_case_page(token: str | None) -> dict[str, Any]:
+            return await self.get_cases(
+                status=status, updated_after=updated_after, page_size=1000, page_token=token,
                 field_client="id,first_name,last_name",
             )
-            all_cases.extend(page.get("items", []))
-            page_token = page.get("next_page_token")
-            if not page_token:
-                break
+
+        # _walk_all_pages (not a hand-rolled loop) reports `truncated` correctly
+        # via page_token, not a len(...) >= cap comparison — see search_cases'
+        # identical comment for why that naive comparison is now wrong essentially
+        # every time, since case_cap equals the real total for most firms.
+        all_cases, case_walk_truncated = await self._walk_all_pages(fetch_case_page, case_cap)
 
         opened_after_d, opened_before_d = self._date_only(opened_after), self._date_only(opened_before)
         closed_after_d, closed_before_d = self._date_only(closed_after), self._date_only(closed_before)
@@ -1104,6 +1410,69 @@ class MyCaseREST:
             row["case_count"] = counts[g]
             items.append(row)
 
+        display_items = items[:limit] if limit is not None else items
+
+        if include_invoices and display_items:
+            try:
+                async def fetch_invoice_page(token: str | None) -> dict[str, Any]:
+                    # only_allowed_online_payments=False is required here — MyCase's
+                    # own server-side default is True (returns ONLY invoices with
+                    # online payments enabled), which would silently drop every
+                    # invoice that has online payments turned off. A user asking for
+                    # "a case's invoices" means ALL of them, not that subset.
+                    return await self.get_invoices(
+                        page_size=1000, page_token=token, only_allowed_online_payments=False,
+                    )
+
+                invoice_cap = await self._invoice_scan_cap(None, only_allowed_online_payments=False)
+                all_invoices, invoices_truncated = await self._walk_all_pages(fetch_invoice_page, invoice_cap)
+                invoices_by_case: dict[int, list[dict[str, Any]]] = {}
+                for inv in all_invoices:
+                    cid = (inv.get("case") or {}).get("id")
+                    if not isinstance(cid, int):
+                        continue
+                    # Confirmed live against a real account: total_amount/paid_amount
+                    # can come back as STRINGS (e.g. "500.0") despite MyCase's own
+                    # docs typing them as "number" — a bare `total - paid` then raises
+                    # TypeError and (before the try/except above existed) took the
+                    # whole case report down with it. _as_float tolerates str/int/
+                    # float/None uniformly.
+                    total = self._as_float(inv.get("total_amount"))
+                    paid = self._as_float(inv.get("paid_amount"))
+                    invoices_by_case.setdefault(cid, []).append({
+                        "id": inv.get("id"),
+                        "invoice_number": inv.get("invoice_number"),
+                        "status": inv.get("status"),
+                        "invoice_date": inv.get("invoice_date"),
+                        "due_date": inv.get("due_date"),
+                        "total_amount": total,
+                        "paid_amount": paid,
+                        "balance_due": total - paid,
+                        "label": f"{inv.get('invoice_number') or inv.get('id')} (${total:.2f}, {inv.get('status')})",
+                    })
+                for row in display_items:
+                    row_invoices = invoices_by_case.get(row.get("id"), [])
+                    row["invoice_count"] = len(row_invoices)
+                    row["outstanding_invoice_total"] = sum(i["balance_due"] for i in row_invoices)
+                    row["invoices"] = row_invoices
+                if invoices_truncated:
+                    for row in display_items:
+                        row["invoices_note"] = (
+                            f"Invoice scan stopped early ({invoice_cap}-invoice cap) — some "
+                            "invoices may be missing."
+                        )
+            except Exception as exc:  # noqa: BLE001
+                # A slow/failed firm-wide invoice scan must NOT take the whole case
+                # report down with it (the case data is still valid and useful on
+                # its own) — same graceful-degradation pattern as
+                # find_cases_with_documents' per-case fetch guard above.
+                logger.warning("aggregate_cases_invoices_fetch_failed", error=str(exc))
+                for row in display_items:
+                    row["invoices_error"] = (
+                        f"Could not fetch invoices for this report: {exc}. "
+                        "Case data above is still complete and accurate."
+                    )
+
         return {
             "success": True,
             "total_cases": total_cases,
@@ -1111,21 +1480,29 @@ class MyCaseREST:
             "group_by_field": group_field_label,
             "report_date": report_date,
             "cases_scanned": len(all_cases),
-            "truncated": len(all_cases) >= max_cases,
-            "items": items,
+            "truncated": case_walk_truncated,
+            "cases_shown": len(display_items),
+            "limited": limit is not None and len(items) > len(display_items),
+            "items": display_items,
         }
 
     async def search_cases(
         self,
         query: str,
         status: str | None = None,
-        max_cases: int = 5000,
+        max_cases: int | None = None,
     ) -> dict[str, Any]:
         """Find cases by a loose text query — MyCase's API has NO server-side search
         or filter for case_number or case name (confirmed: get_cases only documents
         filter[status] and filter[updated_after]), so a request like "find the case
         numbered/named X" has no targeted endpoint to call. This walks every page of
         get_cases server-side (same pattern as aggregate_cases).
+
+        max_cases defaults to the REAL total case count (via a cheap probe — see
+        _case_scan_cap), not a fixed guess — confirmed live that a hardcoded 5000
+        cap silently made a genuinely existing, correctly-spelled case invisible
+        to search on an account with 7,216 real cases, no matter how the query
+        was phrased, because the case was simply never in the scanned batch.
 
         If ``query`` is an EXACT case_number match (case-insensitive) for one or more
         cases, ONLY those are returned — a case's display ``name`` often embeds a
@@ -1161,14 +1538,18 @@ class MyCaseREST:
         if not q:
             raise ValueError("query must not be empty")
 
-        all_cases: list[dict[str, Any]] = []
-        page_token: str | None = None
-        while len(all_cases) < max_cases:
-            page = await self.get_cases(status=status, page_size=1000, page_token=page_token)
-            all_cases.extend(page.get("items", []))
-            page_token = page.get("next_page_token")
-            if not page_token:
-                break
+        case_cap = await self._case_scan_cap(max_cases, status=status)
+
+        async def fetch_page(token: str | None) -> dict[str, Any]:
+            return await self.get_cases(status=status, page_size=1000, page_token=token)
+
+        # _walk_all_pages (not a hand-rolled loop) is deliberate here: it reports
+        # `truncated` correctly by checking page_token directly, whereas comparing
+        # len(all_cases) >= case_cap after the fact (the old inline pattern) falsely
+        # says "truncated" whenever the real total happens to land exactly on the
+        # cap — which, now that case_cap IS the real total for any firm under the
+        # safety ceiling, is essentially every successful complete scan.
+        all_cases, truncated = await self._walk_all_pages(fetch_page, case_cap)
 
         # A purely numeric query could be either the case_number OR the case's own
         # internal numeric id — check both before falling back to a substring match.
@@ -1195,7 +1576,7 @@ class MyCaseREST:
             "success": True,
             "query": query,
             "cases_scanned": len(all_cases),
-            "truncated": len(all_cases) >= max_cases,
+            "truncated": truncated,
             "match_count": len(matched),
             "items": matched,
         }
@@ -1225,13 +1606,25 @@ class MyCaseREST:
 
     async def get_case_invoices(
         self, case_id: int | None = None, case_query: str | None = None,
-        only_allowed_online_payments: bool | None = None, max_invoices: int = 5000,
+        only_allowed_online_payments: bool | None = None, max_invoices: int | None = None,
     ) -> dict[str, Any]:
         """All invoices for ONE case — resolved by an exact `case_id`, or by a loose
         `case_query` (case_number, internal id, or name — same resolution logic as
         search_cases). MyCase's /invoices endpoint has no server-side case filter,
         so this walks every invoice page and matches `item.case.id` client-side —
         but ONLY once the case itself is confirmed to be a single, real match.
+
+        `max_invoices` defaults to the firm's REAL total invoice count (via a cheap
+        probe — see `_invoice_scan_cap`), not a fixed guess — a hardcoded cap
+        silently misses this case's invoices whenever they happen to sit past that
+        cutoff in a firm with more invoices than the guess. Pass an explicit value
+        to override (e.g. to bound a very large firm more aggressively).
+
+        `only_allowed_online_payments` defaults to False here (fetch ALL of the
+        case's invoices) — NOT MyCase's own server default of True, which silently
+        returns only invoices that have online payments enabled. This tool's whole
+        point is "ALL invoices for this case"; a caller who genuinely wants only the
+        online-payable subset can still pass True explicitly.
 
         If `case_query` resolves to ZERO cases, this returns immediately with
         `matched_case: null` and an EMPTY items[] WITHOUT ever calling /invoices —
@@ -1279,12 +1672,15 @@ class MyCaseREST:
             matched_case = items[0]
             resolved_id = matched_case.get("id")
 
+        effective_online_filter = only_allowed_online_payments if only_allowed_online_payments is not None else False
+
         async def fetch_page(token: str | None) -> dict[str, Any]:
             return await self.get_invoices(
-                only_allowed_online_payments=only_allowed_online_payments, page_size=1000, page_token=token,
+                only_allowed_online_payments=effective_online_filter, page_size=1000, page_token=token,
             )
 
-        all_invoices, truncated = await self._walk_all_pages(fetch_page, max_invoices)
+        invoice_cap = await self._invoice_scan_cap(max_invoices, only_allowed_online_payments=effective_online_filter)
+        all_invoices, truncated = await self._walk_all_pages(fetch_page, invoice_cap)
         matched_invoices = [inv for inv in all_invoices if (inv.get("case") or {}).get("id") == resolved_id]
 
         return {

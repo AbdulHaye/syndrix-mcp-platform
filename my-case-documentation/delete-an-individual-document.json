@@ -1,0 +1,11 @@
+{
+  "name": "Delete an Individual Document",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/dfd79bd80c6cf-delete-an-individual-document",
+  "method": "DELETE",
+  "path": null,
+  "description": "Allows you to delete a specfic document, based on the authorized user/firm priviledges.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Delete an Individual Document\nDELETE\nhttps://external-integrations.mycase.com/v1/documents/{id}\n\nAllows you to delete a specfic document, based on the authorized user/firm priviledges.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the document you want to view or update.\n\nResponses\n204\n\nNo Content\n\nRequest Sample: Shell / cURL\ncurl --request DELETE \\\n  --url https://external-integrations.mycase.com/v1/documents/{id} \\\n  --header 'Content-Type: application/json'"
+}

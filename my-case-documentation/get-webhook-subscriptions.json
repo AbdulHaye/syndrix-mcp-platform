@@ -1,0 +1,11 @@
+{
+  "name": "Get Webhook Subscriptions",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/782791dbe8a99-get-webhook-subscriptions",
+  "method": "GET",
+  "path": null,
+  "description": "Get all current webhook subscriptions.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Get Webhook Subscriptions\nGET\nhttps://external-integrations.mycase.com/v1/webhooks/subscriptions\n\nGet all current webhook subscriptions.\n\nResponses\n200\n\nOK\n\nBody\napplication/json\napplication/json\narray of:\nid\nstring\n\nA unique identifier for the webhook subscription.\n\nmodel\nstring\n\nThe model this subsciption will receive updates for.\n\nurl\nstring\n\nThe url where updates will be sent.\n\nactions\narray[string]\n\nThe actions that updates will be received for. Any or all of created | updated | deleted.\n\nhmac_key\nstring\n\nThe hmac_key is the shared secret used to generate a cryptographic hash (HMAC) that ensures the integrity and authenticity of our webhook data. Please handle it securely to prevent unauthorized data transmission.\n\nRequest Sample: Shell / cURL\ncurl --request GET \\\n  --url https://external-integrations.mycase.com/v1/webhooks/subscriptions \\\n  --header 'Accept: application/json'\nResponse Example\n1\n[\n2\n  {\n3\n    \"id\": \"string\",\n4\n    \"model\": \"string\",\n5\n    \"url\": \"string\",\n6\n    \"actions\": [\n7\n      \"string\"\n8\n    ],\n9\n    \"hmac_key\": \"string\"\n10\n  }\n11\n]"
+}

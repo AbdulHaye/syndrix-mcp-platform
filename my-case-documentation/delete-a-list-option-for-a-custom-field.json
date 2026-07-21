@@ -1,0 +1,11 @@
+{
+  "name": "Delete a List Option for a Custom Field",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/8ccbefaa00f3e-delete-a-list-option-for-a-custom-field",
+  "method": "DELETE",
+  "path": null,
+  "description": "Delete a specific list option on a custom field.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Delete a List Option for a Custom Field\nDELETE\nhttps://external-integrations.mycase.com/v1/custom_fields/{id}/list_options/{key}\n\nDelete a specific list option on a custom field.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the custom field you want to view or update.\n\nkey\nstring\nrequired\n\nThe unique key identifier of the list option to update.\n\nResponses\n204\n\nNo Content\n\nRequest Sample: Shell / cURL\ncurl --request DELETE \\\n  --url https://external-integrations.mycase.com/v1/custom_fields/{id}/list_options/{key} \\\n  --header 'Content-Type: application/json'"
+}

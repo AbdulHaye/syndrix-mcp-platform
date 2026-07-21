@@ -1,0 +1,182 @@
+Update an Individual Case
+PUT
+https://external-integrations.mycase.com/v1/cases/{id}
+
+Allows you to edit a specfic firm case, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the case you want to view or update.
+
+Body
+application/json
+application/json
+name
+string
+required
+
+The name of the case. The case name gets validated against our system so it must be unique.
+
+case_number
+string
+
+An identifier the firm would like to use for this case. It is recommended the intentifier be unique but is not required.
+
+opened_date
+string
+
+The date the case was created/opened, must be in ISO-8601 date format.
+
+case_stage
+string
+
+The stage the case is currently in. It must match the name of the stage in the mycase system (not case sensitive), if it does not match it will default to blank.
+
+practice_area
+string
+
+The practice area for this case. Practice area must match what is in the mycase system (not case sensitive), if it does not, we default to blank.
+
+description
+string
+
+A description for the case.
+
+sol_date
+string
+
+The statue of limitations date for the case, must be in ISO-8601 date (do not include ISO time).
+
+status
+string
+
+The status of the case. One of open or closed.
+
+outstanding_balance
+number
+
+The outstanding balance of this case.
+
+billing_contact
+object
+
+The billing contact for this case.
+
+id
+integer
+
+The ID of the client or company to assign as the billing contact for this case.
+
+contacts
+any
+deprecated
+
+[DEPRECATED] This field has been replaced by the clients field for consistency. Please use the clients field instead. Use of both fields will result in an error.
+
+clients
+array[object]
+
+Any clients you want associated to the case.
+
+id
+integer
+
+The ID of the client to associate with the case.
+
+companies
+array[object]
+
+Any companies you want associated to the case.
+
+id
+integer
+
+The ID of the company to associate with the case.
+
+staff
+array[object]
+
+Any staff members you would like associated with the case.
+
+id
+integer
+lead_lawyer
+boolean
+
+A boolean specifying if the staff member associated to this case is the lead lawyer.
+
+originating_lawyer
+boolean
+
+A boolean specifying if the staff member associated to this case is the originating lawyer.
+
+custom_field_values
+array[CustomFieldValueRequest]
+
+Specify values for custom fields that have parent_type of case.
+
+custom_field
+object
+required
+
+The custom field that this value is associated with.
+
+value
+string or number or boolean
+required
+
+The value of this custom field.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request PUT \
+  --url https://external-integrations.mycase.com/v1/cases/{id} \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "name": "string",
+  "case_number": "string",
+  "opened_date": "string",
+  "case_stage": "string",
+  "practice_area": "string",
+  "description": "string",
+  "sol_date": "string",
+  "status": "string",
+  "outstanding_balance": 0,
+  "billing_contact": {
+    "id": 0
+  },
+  "contacts": null,
+  "clients": [
+    {
+      "id": 0
+    }
+  ],
+  "companies": [
+    {
+      "id": 0
+    }
+  ],
+  "staff": [
+    {
+      "id": 0,
+      "lead_lawyer": true,
+      "originating_lawyer": true
+    }
+  ],
+  "custom_field_values": [
+    {
+      "custom_field": {
+        "id": 0
+      },
+      "value": "string"
+    }
+  ]
+}'

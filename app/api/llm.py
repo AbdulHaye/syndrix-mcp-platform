@@ -45,6 +45,7 @@ async def list_models(
     openai = await model_gateway.list_openai_models()
     anthropic = await model_gateway.list_anthropic_models()
     zai = await model_gateway.list_zai_models()
+    openrouter = await model_gateway.list_openrouter_models()
     selected = (await get_setting(setting_key)) or _DEFAULT_MODEL
     return {
         "ollama": [f"ollama:{m}" for m in ollama],
@@ -54,6 +55,7 @@ async def list_models(
         "openai": [f"openai:{m}" for m in openai],
         "anthropic": [f"anthropic:{m}" for m in anthropic],
         "zai": [f"zai:{m}" for m in zai],
+        "openrouter": [f"openrouter:{m}" for m in openrouter],
         "selected": selected,
     }
 

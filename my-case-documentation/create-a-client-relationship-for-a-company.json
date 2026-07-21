@@ -1,0 +1,11 @@
+{
+  "name": "Create a Client Relationship for a Company",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/0c4402b792867-create-a-client-relationship-for-a-company",
+  "method": "POST",
+  "path": null,
+  "description": "Create a client relationship for a specified company.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Create a Client Relationship for a Company\nPOST\nhttps://external-integrations.mycase.com/v1/companies/{id}/relationships/clients\n\nCreate a client relationship for a specified company.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the company you want to add clients to.\n\nBody\napplication/json\napplication/json\nclients\narray[object]\n\nA list of clients to add to the company.\n\n>= 1 items\nid\ninteger\nResponses\n204\n\nNo Content\n\nRequest Sample: Shell / cURL\ncurl --request POST \\\n  --url https://external-integrations.mycase.com/v1/companies/{id}/relationships/clients \\\n  --header 'Content-Type: application/json' \\\n  --data '{\n  \"clients\": [\n    {\n      \"id\": 0\n    }\n  ]\n}'"
+}

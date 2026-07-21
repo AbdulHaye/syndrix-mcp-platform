@@ -1,0 +1,164 @@
+Get All Notes for a Case
+GET
+https://external-integrations.mycase.com/v1/cases/{id}/notes
+
+Get all notes associated with a specific case.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the case you want to get or create notes for.
+
+Responses
+200
+
+OK
+
+Headers
+Item-Count
+number
+
+The total number of results.
+
+Link
+string
+
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+application/json
+application/json
+responses
+/
+200
+array of:
+id
+number
+
+A unique identifier for the note.
+
+subject
+string
+
+Subject of the note.
+
+note
+string
+
+The body text of the note.
+
+archived
+boolean
+
+Whether or not the note is archived.
+
+date
+string or null
+
+The date of the note.
+
+client
+object or null
+
+The client associated with this note, if there is one.
+
+id
+number
+company
+object or null
+
+The company associated with this note, if there is one.
+
+id
+number
+case
+object or null
+
+The case associated with this note, if there is one.
+
+id
+number
+created_by
+object
+
+The staff member who created this note.
+
+id
+number
+updated_by
+object
+
+The staff member who updated this note.
+
+id
+number
+created_at
+string
+
+The date the note was created in ISO 8601 date/time format.
+
+updated_at
+string
+
+The date the note was updated in ISO 8601 date/time format.
+
+Request Sample: Shell / cURL
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/cases/{id}/notes \
+  --header 'Accept: application/json'
+Response Example
+1
+[
+2
+  {
+3
+    "id": 0,
+4
+    "subject": "string",
+5
+    "note": "string",
+6
+    "archived": true,
+7
+    "date": "string",
+8
+    "client": {
+9
+      "id": 0
+10
+    },
+11
+    "company": {
+12
+      "id": 0
+13
+    },
+14
+    "case": {
+15
+      "id": 0
+16
+    },
+17
+    "created_by": {
+18
+      "id": 0
+19
+    },
+20
+    "updated_by": {
+21
+      "id": 0
+22
+    },
+23
+    "created_at": "string",
+24
+    "updated_at": "string"
+25
+  }
+26
+]

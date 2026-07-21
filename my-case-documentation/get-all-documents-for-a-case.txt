@@ -1,0 +1,126 @@
+Get All Documents for a Case
+GET
+https://external-integrations.mycase.com/v1/cases/{id}/documents
+
+Get all documents associated with a specific case.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the case you want to get / add documents from / to.
+
+Responses
+200
+
+OK
+
+Headers
+Item-Count
+number
+
+The total number of results.
+
+Link
+string
+
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+application/json
+application/json
+responses
+/
+200
+array of:
+id
+integer
+name
+string
+
+The name of the document as seen in MyCase.
+
+filename
+string
+
+The name of the physical file associated with this document.
+
+path
+string
+
+The folder structure of where this document is located in MyCase.
+
+description
+string
+assigned_date
+string
+case
+CaseNestedResponse or null
+id
+integer
+
+The ID of the case.
+
+created_at
+string
+updated_at
+string
+self_url
+string
+
+The url that can be used to view this document specifically.
+
+Example:
+/v1/documents/1
+folder
+FolderNestedResponse
+id
+number
+
+The ID of the parent folder.
+
+Request Sample: Shell / cURL
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/cases/{id}/documents \
+  --header 'Accept: application/json'
+Response Example
+1
+[
+2
+  {
+3
+    "id": 0,
+4
+    "name": "string",
+5
+    "filename": "string",
+6
+    "path": "string",
+7
+    "description": "string",
+8
+    "assigned_date": "string",
+9
+    "case": {
+10
+      "id": 0
+11
+    },
+12
+    "created_at": "string",
+13
+    "updated_at": "string",
+14
+    "self_url": "/v1/documents/1",
+15
+    "folder": {
+16
+      "id": 0
+17
+    }
+18
+  }
+19
+]

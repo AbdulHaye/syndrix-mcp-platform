@@ -1,0 +1,123 @@
+Create a Location
+POST
+https://external-integrations.mycase.com/v1/locations
+
+Create a location.
+
+Request
+Body
+application/json
+application/json
+name
+string
+required
+
+The name of the location
+
+address
+AddressRequest
+
+If you provide any address object then all address properties need to be included.
+
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+Responses
+201
+
+Created
+
+Body
+application/json
+application/json
+responses
+/
+201
+id
+number
+
+A unique identifier for the location.
+
+name
+string
+
+The name of the location.
+
+address
+AddressNestedResponse
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+created_at
+string
+
+The date the location was created in ISO 8601 date/time format.
+
+updated_at
+string
+
+The date the location was updated in ISO 8601 date/time format.
+
+Request Sample: Shell / cURL
+curl --request POST \
+  --url https://external-integrations.mycase.com/v1/locations \
+  --header 'Accept: application/json' \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "name": "string",
+  "address": {
+    "address1": "string",
+    "address2": "string",
+    "city": "string",
+    "state": "string",
+    "zip_code": "string",
+    "country": "string"
+  }
+}'
+Response Example
+1
+{
+2
+  "id": 0,
+3
+  "name": "string",
+4
+  "address": {
+5
+    "address1": "string",
+6
+    "address2": "string",
+7
+    "city": "string",
+8
+    "state": "string",
+9
+    "zip_code": "string",
+10
+    "country": "string"
+11
+  },
+12
+  "created_at": "string",
+13
+  "updated_at": "string"
+14
+}

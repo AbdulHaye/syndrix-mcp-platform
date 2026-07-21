@@ -1,0 +1,143 @@
+Get Tasks
+GET
+https://external-integrations.mycase.com/v1/tasks
+
+Get all firm tasks viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+
+OK
+
+Headers
+Item-Count
+number
+
+The total number of results.
+
+Link
+string
+
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+application/json
+application/json
+responses
+/
+200
+array of:
+id
+integer
+name
+string
+
+The name of this task.
+
+description
+string
+priority
+string
+
+The priority of this task. One of (Low | Medium | High)
+
+due_date
+string
+
+The due date of this task in ISO 8601 date format.
+
+completed
+boolean
+
+Whether or not this task is completed.
+
+case
+object
+
+The case associated with this task, if there is one.
+
+id
+integer
+staff
+array[object]
+
+All staff associated with this task.
+
+id
+integer
+created_at
+string
+updated_at
+string
+completed_at
+string
+
+Null if the task has not been completed.
+
+Request Sample: Shell / cURL
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/tasks \
+  --header 'Accept: application/json'
+Response Example
+1
+[
+2
+  {
+3
+    "id": 0,
+4
+    "name": "string",
+5
+    "description": "string",
+6
+    "priority": "string",
+7
+    "due_date": "string",
+8
+    "completed": true,
+9
+    "case": {
+10
+      "id": 0
+11
+    },
+12
+    "staff": [
+13
+      {
+14
+        "id": 0
+15
+      }
+16
+    ],
+17
+    "created_at": "string",
+18
+    "updated_at": "string",
+19
+    "completed_at": "string"
+20
+  }
+21
+]

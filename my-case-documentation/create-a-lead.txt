@@ -1,0 +1,404 @@
+Create a Lead
+POST
+https://external-integrations.mycase.com/v1/leads
+
+Create an individual lead.
+
+Request
+Body
+application/json
+application/json
+email
+string
+
+The email of the lead.
+
+first_name
+string
+required
+
+The first name of the lead.
+
+middle_initial
+string
+
+The middle name (or initial) of the lead.
+
+last_name
+string
+required
+
+The last name of the lead.
+
+address
+AddressRequest
+
+If you provide any address object then all address properties need to be included.
+
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+cell_phone_number
+string
+
+The leads cell phone number.
+
+work_phone_number
+string
+
+The leads work phone number.
+
+home_phone_number
+string
+
+The leads home phone number.
+
+lead_details
+string
+
+Any additional information associated to a particular lead. It is seen by other firm members but is not visible to the individual lead.
+
+birthdate
+string
+
+The leads date of birth in ISO-8601 date format.
+
+drivers_license_number
+string
+
+The leads drivers license number.
+
+drivers_license_state
+string
+
+The leads drivers license state.
+
+referral_source
+string
+deprecated
+
+Deprecated. Please use the referral_source_reference field instead.
+
+referral_source_reference
+object
+
+The referral source to associate with this lead.
+
+id
+integer
+referred_by
+object
+
+If the lead was referred by another client or company in the system you would use this object.
+
+id
+integer
+
+The ID of the existing client or company in mycase. If it does not match, we default to none.
+
+custom_field_values
+array[CustomFieldValueRequest]
+
+Specify values for custom fields that have parent_type of client.
+
+custom_field
+object
+required
+
+The custom field that this value is associated with.
+
+value
+string or number or boolean
+required
+
+The value of this custom field.
+
+Responses
+201
+
+Created
+
+Body
+application/json
+application/json
+responses
+/
+201
+id
+integer
+
+The unique ID of the lead.
+
+email
+string
+
+The email of the lead.
+
+first_name
+string
+
+The first name of the lead.
+
+middle_initial
+string
+
+The middle name (or initial) of the lead.
+
+last_name
+string
+
+The last name of the lead.
+
+address
+AddressNestedResponse
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+cell_phone_number
+string
+
+The leads cell phone number.
+
+work_phone_number
+string
+
+The leads work phone number.
+
+home_phone_number
+string
+
+The leads home phone number.
+
+lead_details
+string
+
+Any additional information associated to a particular lead. It is seen by other firm members but is not visible to the individual lead.
+
+birthdate
+string
+
+The leads date of birth in ISO-8601 date format.
+
+drivers_license_number
+string
+
+The leads drivers license number.
+
+drivers_license_state
+string
+
+The leads drivers license state.
+
+status
+string
+
+The current status of the lead.
+
+approved
+boolean
+
+Whether or not this lead is approved.
+
+referral_source
+string
+deprecated
+
+Deprecated. Please use the referral_source_reference field instead.
+
+referral_source_reference
+object
+
+The referral source associated with this lead.
+
+id
+integer
+referred_by
+object
+
+If the lead was referred by another client or company in the system you would use this object.
+
+id
+integer
+
+The ID of the existing client or company in mycase.
+
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+
+The value of this custom field.
+
+created_at
+string
+
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+updated_at
+string
+
+When the lead was last updated.
+
+created_at
+string
+
+When the lead was created.
+
+Request Sample: Shell / cURL
+curl --request POST \
+  --url https://external-integrations.mycase.com/v1/leads \
+  --header 'Accept: application/json' \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "email": "string",
+  "first_name": "string",
+  "middle_initial": "string",
+  "last_name": "string",
+  "address": {
+    "address1": "string",
+    "address2": "string",
+    "city": "string",
+    "state": "string",
+    "zip_code": "string",
+    "country": "string"
+  },
+  "cell_phone_number": "string",
+  "work_phone_number": "string",
+  "home_phone_number": "string",
+  "lead_details": "string",
+  "birthdate": "string",
+  "drivers_license_number": "string",
+  "drivers_license_state": "string",
+  "referral_source": "string",
+  "referral_source_reference": {
+    "id": 0
+  },
+  "referred_by": {
+    "id": 0
+  },
+  "custom_field_values": [
+    {
+      "custom_field": {
+        "id": 0
+      },
+      "value": "string"
+    }
+  ]
+}'
+Response Example
+1
+{
+2
+  "id": 0,
+3
+  "email": "string",
+4
+  "first_name": "string",
+5
+  "middle_initial": "string",
+6
+  "last_name": "string",
+7
+  "address": {
+8
+    "address1": "string",
+9
+    "address2": "string",
+10
+    "city": "string",
+11
+    "state": "string",
+12
+    "zip_code": "string",
+13
+    "country": "string"
+14
+  },
+15
+  "cell_phone_number": "string",
+16
+  "work_phone_number": "string",
+17
+  "home_phone_number": "string",
+18
+  "lead_details": "string",
+19
+  "birthdate": "string",
+20
+  "drivers_license_number": "string",
+21
+  "drivers_license_state": "string",
+22
+  "status": "string",
+23
+  "approved": true,
+24
+  "referral_source": "string",
+25
+  "referral_source_reference": {
+26
+    "id": 0
+27
+  },
+28
+  "referred_by": {
+29
+    "id": 0
+30
+  },
+31
+  "custom_field_values": [
+32
+    {
+33
+      "custom_field": {
+34
+        "id": 0,
+35
+        "field_type": "string"
+36
+      },
+37
+      "value": "string",
+38
+      "created_at": "string",
+39
+      "updated_at": "string"
+40
+    }
+41
+  ],
+42
+  "updated_at": "string",
+43
+  "created_at": "string"
+44
+}

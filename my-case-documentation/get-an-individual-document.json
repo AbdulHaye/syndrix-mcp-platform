@@ -1,0 +1,11 @@
+{
+  "name": "Get an Individual Document",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/779d1b3acfcc0-get-an-individual-document",
+  "method": "GET",
+  "path": null,
+  "description": "Allows you to view a specfic document, based on the authorized user/firm priviledges.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Get an Individual Document\nGET\nhttps://external-integrations.mycase.com/v1/documents/{id}\n\nAllows you to view a specfic document, based on the authorized user/firm priviledges.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the document you want to view or update.\n\nResponses\n200\n\nOK\n\nBody\napplication/json\napplication/json\nid\ninteger\nname\nstring\n\nThe name of the document as seen in MyCase.\n\nfilename\nstring\n\nThe name of the physical file associated with this document.\n\npath\nstring\n\nThe folder structure of where this document is located in MyCase.\n\ndescription\nstring\nassigned_date\nstring\ncase\nCaseNestedResponse or null\nid\ninteger\n\nThe ID of the case.\n\ncreated_at\nstring\nupdated_at\nstring\nself_url\nstring\n\nThe url that can be used to view this document specifically.\n\nExample:\n/v1/documents/1\nfolder\nFolderNestedResponse\nid\nnumber\n\nThe ID of the parent folder.\n\nRequest Sample: Shell / cURL\ncurl --request GET \\\n  --url https://external-integrations.mycase.com/v1/documents/{id} \\\n  --header 'Accept: application/json'\nResponse Example\n1\n{\n2\n  \"id\": 0,\n3\n  \"name\": \"string\",\n4\n  \"filename\": \"string\",\n5\n  \"path\": \"string\",\n6\n  \"description\": \"string\",\n7\n  \"assigned_date\": \"string\",\n8\n  \"case\": {\n9\n    \"id\": 0\n10\n  },\n11\n  \"created_at\": \"string\",\n12\n  \"updated_at\": \"string\",\n13\n  \"self_url\": \"/v1/documents/1\",\n14\n  \"folder\": {\n15\n    \"id\": 0\n16\n  }\n17\n}"
+}

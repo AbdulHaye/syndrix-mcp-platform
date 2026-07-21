@@ -1,0 +1,11 @@
+{
+  "name": "Delete an Individual Note",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/d7242da7af5a2-delete-an-individual-note",
+  "method": "DELETE",
+  "path": null,
+  "description": "Allows you to delete a specfic note, based on the authorized user/firm priviledges.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Delete an Individual Note\nDELETE\nhttps://external-integrations.mycase.com/v1/notes/{id}\n\nAllows you to delete a specfic note, based on the authorized user/firm priviledges.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the note you want to view or update.\n\nResponses\n204\n\nNo Content\n\nRequest Sample: Shell / cURL\ncurl --request DELETE \\\n  --url https://external-integrations.mycase.com/v1/notes/{id} \\\n  --header 'Content-Type: application/json'"
+}

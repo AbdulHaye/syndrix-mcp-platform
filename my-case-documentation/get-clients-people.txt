@@ -1,0 +1,322 @@
+Get Clients (People)
+GET
+https://external-integrations.mycase.com/v1/clients
+
+Get all firm clients (people) viewable by the authorized user.
+
+Request
+Query Parameters
+filter[cell_phone_number]
+string
+
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[cell_phone_number]=760-555-1234
+filter[email]
+string
+
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[email]=lawyer@lawfirm.com
+filter[first_name]
+string
+
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[first_name]=John
+filter[home_phone_number]
+string
+
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[home_phone_number]=760-555-1234
+filter[last_name]
+string
+
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[last_name]=Doe
+filter[updated_after]
+string
+
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+filter[work_phone_number]
+string
+
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[work_phone_number]=760-555-1234
+page_size
+number
+
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+
+OK
+
+Headers
+Item-Count
+number
+
+The total number of results.
+
+Link
+string
+
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+application/json
+application/json
+array of:
+id
+integer
+
+The unique ID of the client.
+
+email
+string
+
+The email of the client.
+
+first_name
+string
+
+The first name of the client.
+
+middle_initial
+string
+deprecated
+
+[DEPRECATED] This field has been replaced by the middle_name field for consistency. Please use the middle_name field instead. Use of both fields will result in an error.
+
+middle_name
+string
+
+The middle name of the client.
+
+last_name
+string
+
+The last name of the client.
+
+address
+AddressNestedResponse
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+cell_phone_number
+string
+
+The clients cell phone number.
+
+work_phone_number
+string
+
+The clients work phone number.
+
+home_phone_number
+string
+
+The clients home phone number.
+
+fax_phone_number
+string
+
+The clients fax phone number.
+
+contact_group
+string
+deprecated
+
+The client's contact group. This has been deprecated. Please use the people_group field instead.
+
+people_group
+object
+
+The people group associated with this client.
+
+id
+integer
+notes
+string
+
+Any additional information associated to a particular client. It is seen by other firm members but is not visible to the individual client.
+
+birthdate
+string
+
+The clients date of birth in ISO-8601 date format.
+
+archived
+boolean
+
+A True or False to let you know if the client has been archived and is no longer available for use.
+
+cases
+array[CaseNestedResponse]
+
+Any cases associated with the client, can be one or multiple.
+
+id
+integer
+
+The ID of the case.
+
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+
+The value of this custom field.
+
+created_at
+string
+
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+updated_at
+string
+
+When the client was last updated.
+
+created_at
+string
+
+When the client was created.
+
+Request Sample: Shell / cURL
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/clients \
+  --header 'Accept: application/json'
+Response Example
+1
+[
+2
+  {
+3
+    "id": 0,
+4
+    "email": "string",
+5
+    "first_name": "string",
+6
+    "middle_initial": "string",
+7
+    "middle_name": "string",
+8
+    "last_name": "string",
+9
+    "address": {
+10
+      "address1": "string",
+11
+      "address2": "string",
+12
+      "city": "string",
+13
+      "state": "string",
+14
+      "zip_code": "string",
+15
+      "country": "string"
+16
+    },
+17
+    "cell_phone_number": "string",
+18
+    "work_phone_number": "string",
+19
+    "home_phone_number": "string",
+20
+    "fax_phone_number": "string",
+21
+    "contact_group": "string",
+22
+    "people_group": {
+23
+      "id": 0
+24
+    },
+25
+    "notes": "string",
+26
+    "birthdate": "string",
+27
+    "archived": true,
+28
+    "cases": [
+29
+      {
+30
+        "id": 0
+31
+      }
+32
+    ],
+33
+    "custom_field_values": [
+34
+      {
+35
+        "custom_field": {
+36
+          "id": 0,
+37
+          "field_type": "string"
+38
+        },
+39
+        "value": "string",
+40
+        "created_at": "string",
+41
+        "updated_at": "string"
+42
+      }
+43
+    ],
+44
+    "updated_at": "string",
+45
+    "created_at": "string"
+46
+  }
+47
+]

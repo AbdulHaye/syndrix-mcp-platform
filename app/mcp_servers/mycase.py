@@ -300,7 +300,7 @@ async def get_invoices(updated_after: str | None = None, only_allowed_online_pay
     )
 
 
-@mycase_mcp.tool(name="get_invoices_by_date", description="Find invoices by an EXACT date or date range on created_at, updated_at, invoice_date, or due_date. Use this for ANY 'invoices created/due/dated on|before|after X' request — get_invoices only supports updated_after (a floor on created-OR-updated time), which is NOT the same as an exact creation date and has no relation to invoice_date/due_date at all; using get_invoices alone for a date-specific question returns the wrong set. on = exact day (YYYY-MM-DD); after/before = inclusive range bounds (combine for a range). Returns only the matching invoices, already filtered — do not filter get_invoices' raw output yourself.")
+@mycase_mcp.tool(name="get_invoices_by_date", description="Find invoices by an EXACT date or date range on created_at, updated_at, invoice_date, or due_date. Use this for ANY 'invoices created/due/dated on|before|after X' request — get_invoices only supports updated_after (a floor on created-OR-updated time), which is NOT the same as an exact creation date and has no relation to invoice_date/due_date at all; using get_invoices alone for a date-specific question returns the wrong set. on = exact day (YYYY-MM-DD); after/before = inclusive range bounds (combine for a range). Returns only the matching invoices, already filtered — do not filter get_invoices' raw output yourself. Defaults to ALL matching invoices regardless of online-payment status (only_allowed_online_payments=False unless you pass True yourself) — unlike raw get_invoices, this does not silently drop invoices with online payments disabled.")
 async def get_invoices_by_date(
     date_field: str = "created_at", on: str | None = None, after: str | None = None, before: str | None = None,
     only_allowed_online_payments: bool | None = None, max_invoices: int | None = None,
@@ -309,6 +309,55 @@ async def get_invoices_by_date(
     if max_invoices is not None:
         kwargs["max_invoices"] = max_invoices
     return await _call("get_invoices_by_date", **kwargs)
+
+
+@mycase_mcp.tool(
+    name="aggregate_invoices",
+    description=(
+        "Filter/sort/limit invoices FIRM-WIDE — the invoice equivalent of aggregate_cases, for "
+        "the same reason: get_invoices has NO server-side filter for status or balance-due at "
+        "all (only updated_after), so 'top N unpaid invoices' / 'overdue invoices' / 'invoices "
+        "over $X owed' has no targeted endpoint. Use this for ANY such request — NEVER call "
+        "get_invoices and try to eyeball-filter/sort/limit its raw output yourself, and NEVER "
+        "just page_size=N a raw get_invoices call expecting a filter to have been applied — it "
+        "has none, so that returns the first N invoices UNFILTERED regardless of what was asked.\n\n"
+        "status: exact match (case-insensitive) against a real MyCase invoice status — overdue, "
+        "paid, partial, draft, unsent, sent, forwarded.\n"
+        "paid: True = fully paid (balance_due<=0); False = NOT fully paid — this is what "
+        "'unpaid'/'invoices that haven't been paid' means (covers overdue/partial/draft/unsent/"
+        "sent/forwarded in one filter, not just status='overdue'). Prefer `paid=False` over "
+        "guessing a status for a plain 'unpaid' request.\n"
+        "min_balance_due: only invoices owing at least this much.\n"
+        "invoice_date_after/invoice_date_before, due_date_after/due_date_before (YYYY-MM-DD, "
+        "inclusive): combine a status/paid filter with a date range in the SAME call.\n"
+        "sort_by: 'balance_due' (default, DESCENDING — largest amount owed first, the usual "
+        "meaning of 'top N unpaid invoices'), 'due_date' (ASCENDING — most overdue/soonest-due "
+        "first), or 'invoice_date' (DESCENDING — most recent first).\n"
+        "limit: caps items to the first N sorted/filtered rows for a 'top N' request — "
+        "total_invoices still reports the TRUE full-match count regardless of limit.\n\n"
+        "Each row includes a computed balance_due column (total_amount - paid_amount, already "
+        "numeric even though this account sometimes returns those as strings) — present it, "
+        "don't recompute it."
+    ),
+)
+async def aggregate_invoices(
+    status: str | None = None,
+    paid: bool | None = None,
+    min_balance_due: float | None = None,
+    invoice_date_after: str | None = None,
+    invoice_date_before: str | None = None,
+    due_date_after: str | None = None,
+    due_date_before: str | None = None,
+    sort_by: str = "balance_due",
+    limit: int | None = None,
+    only_allowed_online_payments: bool | None = None,
+) -> dict:
+    return await _call(
+        "aggregate_invoices", status=status, paid=paid, min_balance_due=min_balance_due,
+        invoice_date_after=invoice_date_after, invoice_date_before=invoice_date_before,
+        due_date_after=due_date_after, due_date_before=due_date_before,
+        sort_by=sort_by, limit=limit, only_allowed_online_payments=only_allowed_online_payments,
+    )
 
 
 @mycase_mcp.tool(name="get_invoice_payments", description="Get all firm invoice payments viewable by the authorized user. Filter by payable_id (the invoice's id) or status (e.g. 'success', 'pending', 'failure').")
@@ -458,7 +507,28 @@ async def get_webhook_subscriptions() -> dict:
         "group_name and the group's case_count. Report-level totals (total_cases, total_groups, "
         "group_by_field, report_date) are returned once at the top level, not repeated per row. "
         "Present the items as-is (each field, including each custom field, as its own column) — "
-        "no further math needed."
+        "no further math needed.\n\n"
+        "limit: use this whenever the user asked for a SPECIFIC NUMBER of cases (e.g. 'show me "
+        "5 immigration cases') — do NOT use search_cases for this (search_cases is only for "
+        "finding one already-identified case by name/number, it has no practice-area/limit "
+        "concept). limit caps how many rows come back in items; total_cases/total_groups/each "
+        "row's case_count still reflect the TRUE full-match totals, not the limited count — "
+        "cases_shown tells you how many rows were actually returned and limited (bool) tells "
+        "you whether more existed than were shown.\n"
+        "include_invoices: set True whenever the request also wants each case's invoices/"
+        "billing (e.g. '...and their invoices', '...with billing info'). This fetches every "
+        "firm invoice ONCE (sized to the firm's real total, capped at 50000 as a safety ceiling — "
+        "ALL of them regardless of online-payment status, not just the online-payable subset) "
+        "and attaches each returned case's own invoices "
+        "directly onto its row (invoice_count, outstanding_invoice_total, invoices[]) in the "
+        "SAME call — do NOT call get_case_invoices in a loop, once per case, instead: that "
+        "re-scans MyCase's entire invoice list from scratch on every single call (slow), and it "
+        "is easy to forget to repeat it for every case, which is exactly why 'N cases and their "
+        "invoices' requests have come back with cases but only one case's invoices, or none at "
+        "all. If the invoice scan itself fails or times out, the case rows are still returned "
+        "successfully with an `invoices_error` field explaining what happened instead of "
+        "losing the whole report — check for that field and report it plainly rather than "
+        "assuming every case's invoices were empty."
     ),
 )
 async def aggregate_cases(
@@ -474,6 +544,8 @@ async def aggregate_cases(
     opened_before: str | None = None,
     closed_after: str | None = None,
     closed_before: str | None = None,
+    limit: int | None = None,
+    include_invoices: bool = False,
 ) -> dict:
     return await _call(
         "aggregate_cases", practice_area=practice_area, custom_field_filters=custom_field_filters,
@@ -481,6 +553,7 @@ async def aggregate_cases(
         status=status, updated_after=updated_after, updated_before=updated_before,
         opened_after=opened_after, opened_before=opened_before,
         closed_after=closed_after, closed_before=closed_before,
+        limit=limit, include_invoices=include_invoices,
     )
 
 
@@ -513,7 +586,11 @@ async def aggregate_cases(
         "query is REQUIRED — never call this with only status and no query. This tool takes ONLY "
         "query and status; it does NOT accept client_id or field_client. For a case's client "
         "details use get_case(case_id, field_client='id,first_name,last_name,email') or "
-        "get_client(client_id) instead — not this tool."
+        "get_client(client_id) instead — not this tool. "
+        "NOT for 'show me N cases of type X' (e.g. 'show me 5 immigration cases') — that is a "
+        "filtered-and-limited LISTING, not a text search for one already-identified case; use "
+        "aggregate_cases(practice_area=..., limit=N) instead, which has an actual limit concept "
+        "and can also attach invoices in the same call."
     ),
 )
 async def search_cases(query: str, status: str | None = None) -> dict:
@@ -537,7 +614,10 @@ async def search_cases(query: str, status: str | None = None) -> dict:
         "an alternative (search by client name, or ask for the exact case id/case number) — do NOT "
         "then call get_invoices yourself to keep looking; that repeats the exact mistake this tool "
         "exists to prevent. If case_query matches MULTIPLE cases, `candidates` lists them — ask the "
-        "user which one before doing anything else."
+        "user which one before doing anything else. "
+        "Defaults to ALL of the case's invoices regardless of online-payment status "
+        "(only_allowed_online_payments=False unless you pass True yourself) — unlike raw "
+        "get_invoices, this does not silently drop invoices with online payments disabled."
     ),
 )
 async def get_case_invoices(

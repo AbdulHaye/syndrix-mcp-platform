@@ -180,6 +180,19 @@ const LLM_PROVIDERS: ServiceGroup[] = [
       { key: "zai_api_key", label: "API Key", placeholder: "your-zai-api-key", secret: true },
     ],
   },
+  {
+    id: "openrouter",
+    label: "OpenRouter",
+    icon: "bi-signpost-split",
+    color: "#6366f1",
+    description:
+      "API key for OpenRouter — a single gateway to models from Anthropic, OpenAI, Google, " +
+      "Meta, DeepSeek, and more. Once set, tool-capable OpenRouter models appear in the model " +
+      "selector on the Podio Agent page.",
+    fields: [
+      { key: "openrouter_api_key", label: "API Key", placeholder: "sk-or-...", secret: true },
+    ],
+  },
 ];
 
 const LLM_STORAGE_KEY = "syndrix_added_llms";

@@ -1,0 +1,70 @@
+Update an Individual Document
+PUT
+https://external-integrations.mycase.com/v1/documents/{id}
+
+Allows you to edit a specfic document, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the document you want to view or update.
+
+Body
+application/json
+application/json
+path
+string
+required
+
+The relative path of this document. This path should include the name of the document. Any folders listed in this path will be created automatically if they are not already in MyCase.
+
+Example:
+example_folder1/example_folder2/example_name
+filename
+string
+required
+
+The filename of the physical file associated with this document including type extension.
+
+Example:
+file.txt
+description
+string
+
+The description of this document.
+
+assigned_date
+string
+
+The assigned date of this document. Must be in ISO 8601 date format.
+
+staff
+array[object]
+
+The staff that this document should be shared with.
+
+id
+integer
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request PUT \
+  --url https://external-integrations.mycase.com/v1/documents/{id} \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "path": "example_folder1/example_folder2/example_name",
+  "filename": "file.txt",
+  "description": "string",
+  "assigned_date": "string",
+  "staff": [
+    {
+      "id": 0
+    }
+  ]
+}'

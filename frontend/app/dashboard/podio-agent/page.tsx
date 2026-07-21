@@ -585,6 +585,7 @@ function ModelSelector() {
   const [openai, setOpenai] = useState<string[]>([]);
   const [anthropic, setAnthropic] = useState<string[]>([]);
   const [zai, setZai] = useState<string[]>([]);
+  const [openrouter, setOpenrouter] = useState<string[]>([]);
   const [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -599,6 +600,7 @@ function ModelSelector() {
         setOpenai(res.openai ?? []);
         setAnthropic(res.anthropic ?? []);
         setZai(res.zai ?? []);
+        setOpenrouter(res.openrouter ?? []);
         setSelected(res.selected);
       } catch {
         /* ignore */
@@ -633,7 +635,7 @@ function ModelSelector() {
       >
         {loading && <option>Loading models…</option>}
         {/* Ensure the current selection is always shown even if discovery missed it */}
-        {!loading && selected && ![...ollama, ...google, ...groq, ...mistral, ...openai, ...anthropic, ...zai].includes(selected) && (
+        {!loading && selected && ![...ollama, ...google, ...groq, ...mistral, ...openai, ...anthropic, ...zai, ...openrouter].includes(selected) && (
           <option value={selected}>{label(selected)}</option>
         )}
         {ollama.length > 0 && (
@@ -685,9 +687,16 @@ function ModelSelector() {
             ))}
           </optgroup>
         )}
+        {openrouter.length > 0 && (
+          <optgroup label="OpenRouter">
+            {openrouter.map((m) => (
+              <option key={m} value={m}>{label(m)}</option>
+            ))}
+          </optgroup>
+        )}
         {!loading && ollama.length === 0 && google.length === 0 && groq.length === 0 &&
           mistral.length === 0 && openai.length === 0 && anthropic.length === 0 &&
-          zai.length === 0 && (
+          zai.length === 0 && openrouter.length === 0 && (
           <option value="">No models found</option>
         )}
       </select>

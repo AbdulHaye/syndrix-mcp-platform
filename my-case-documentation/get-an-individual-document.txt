@@ -1,0 +1,107 @@
+Get an Individual Document
+GET
+https://external-integrations.mycase.com/v1/documents/{id}
+
+Allows you to view a specfic document, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the document you want to view or update.
+
+Responses
+200
+
+OK
+
+Body
+application/json
+application/json
+id
+integer
+name
+string
+
+The name of the document as seen in MyCase.
+
+filename
+string
+
+The name of the physical file associated with this document.
+
+path
+string
+
+The folder structure of where this document is located in MyCase.
+
+description
+string
+assigned_date
+string
+case
+CaseNestedResponse or null
+id
+integer
+
+The ID of the case.
+
+created_at
+string
+updated_at
+string
+self_url
+string
+
+The url that can be used to view this document specifically.
+
+Example:
+/v1/documents/1
+folder
+FolderNestedResponse
+id
+number
+
+The ID of the parent folder.
+
+Request Sample: Shell / cURL
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/documents/{id} \
+  --header 'Accept: application/json'
+Response Example
+1
+{
+2
+  "id": 0,
+3
+  "name": "string",
+4
+  "filename": "string",
+5
+  "path": "string",
+6
+  "description": "string",
+7
+  "assigned_date": "string",
+8
+  "case": {
+9
+    "id": 0
+10
+  },
+11
+  "created_at": "string",
+12
+  "updated_at": "string",
+13
+  "self_url": "/v1/documents/1",
+14
+  "folder": {
+15
+    "id": 0
+16
+  }
+17
+}

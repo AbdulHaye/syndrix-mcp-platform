@@ -1,0 +1,53 @@
+Create a Staff Relationship for a Case
+POST
+https://external-integrations.mycase.com/v1/cases/{id}/relationships/staff
+
+Create a staff relationship for a specified case.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the case you want to add staff to.
+
+Body
+application/json
+application/json
+staff
+array[object]
+
+A list of staff to add to the case.
+
+id
+integer
+required
+lead_lawyer
+boolean
+
+A boolean specifying if the staff member associated to this case is the lead lawyer.
+
+originating_lawyer
+boolean
+
+A boolean specifying if the staff member associated to this case is the originating lawyer.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request POST \
+  --url https://external-integrations.mycase.com/v1/cases/{id}/relationships/staff \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "staff": [
+    {
+      "id": 0,
+      "lead_lawyer": true,
+      "originating_lawyer": true
+    }
+  ]
+}'

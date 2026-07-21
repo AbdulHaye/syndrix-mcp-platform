@@ -1,0 +1,35 @@
+Update an Individual Practice Area
+PUT
+https://external-integrations.mycase.com/v1/practice_areas/{id}
+
+Allows you to edit a specfic practice area, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the practice area you want to view or update.
+
+Body
+application/json
+application/json
+name
+string
+required
+
+The name of the practice area.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request PUT \
+  --url https://external-integrations.mycase.com/v1/practice_areas/{id} \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "name": "string"
+}'

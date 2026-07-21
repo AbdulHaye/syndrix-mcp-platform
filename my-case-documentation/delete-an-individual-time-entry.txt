@@ -1,0 +1,23 @@
+Delete an Individual Time Entry
+DELETE
+https://external-integrations.mycase.com/v1/time_entries/{id}
+
+Allows you to delete a specfic time entry, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the expense you want to view or update.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request DELETE \
+  --url https://external-integrations.mycase.com/v1/time_entries/{id} \
+  --header 'Content-Type: application/json'

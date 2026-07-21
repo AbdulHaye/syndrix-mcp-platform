@@ -1,0 +1,11 @@
+{
+  "name": "Create a Message on a Message Thread",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/3ce67f7949827-create-a-message-on-a-message-thread",
+  "method": "POST",
+  "path": null,
+  "description": "Create an individual message on a message thread.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Create a Message on a Message Thread\nPOST\nhttps://external-integrations.mycase.com/v1/message_threads/{id}/messages\n\nCreate an individual message on a message thread.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe ID of the message thread to create a message for.\n\nBody\napplication/json\napplication/json\nsender\nobject\nrequired\n\nThe Staff member or Contact who sent the message.\n\nid\ninteger\nbody\nstring\nrequired\n\nThe body text of the message.\n\nResponses\n201\n\nCreated\n\nBody\napplication/json\napplication/json\nresponses\n/\n201\nid\nnumber\n\nA unique identifier for the message.\n\nsender\nobject\n\nThe Staff member or Contact who sent the message.\n\nid\ninteger\nbody\nstring\n\nThe body text of the message.\n\nmessage_thread\nobject\n\nThe message thread that this message is associated with.\n\nid\ninteger\nsubject\nstring\ncreated_at\nstring\n\nThe date the message thread was created in ISO 8601 date/time format.\n\nupdated_at\nstring\n\nThe date the message thread was updated in ISO 8601 date/time format.\n\nRequest Sample: Shell / cURL\ncurl --request POST \\\n  --url https://external-integrations.mycase.com/v1/message_threads/{id}/messages \\\n  --header 'Accept: application/json' \\\n  --header 'Content-Type: application/json' \\\n  --data '{\n  \"sender\": {\n    \"id\": 0\n  },\n  \"body\": \"string\"\n}'\nResponse Example\n1\n{\n2\n  \"id\": 0,\n3\n  \"sender\": {\n4\n    \"id\": 0\n5\n  },\n6\n  \"body\": \"string\",\n7\n  \"message_thread\": {\n8\n    \"id\": 0,\n9\n    \"subject\": \"string\"\n10\n  },\n11\n  \"created_at\": \"string\",\n12\n  \"updated_at\": \"string\"\n13\n}"
+}

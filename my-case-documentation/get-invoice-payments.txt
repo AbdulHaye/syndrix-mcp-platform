@@ -1,0 +1,188 @@
+Get Invoice Payments
+GET
+https://external-integrations.mycase.com/v1/invoice_payments
+
+Get all firm invoice payments viewable by the authorized user.
+
+Request
+Query Parameters
+filter[payable_id]
+string
+
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[payable_id]=12345
+filter[status]
+string
+
+Filters the response to return only resources that match the filter provided.
+
+Example:
+?filter[status]=success
+page_size
+number
+
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+
+OK
+
+Headers
+Item-Count
+number
+
+The total number of results.
+
+Link
+string
+
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+application/json
+application/json
+responses
+/
+200
+array of:
+id
+integer
+amount
+number
+
+The amount of the payment.
+
+notes
+string
+
+The notes associated with this payment.
+
+date
+string or null
+
+The date recorded for the payment in ISO 8601 date format.
+
+invoice
+object
+
+The invoice that this payment is associated with.
+
+id
+integer
+status
+string
+
+The status of the payment. One of pending | success | failure | error | timeout.
+
+transaction_type
+string or null
+
+The type of transaction that this payment is associated with.
+
+case
+CaseNestedResponse or null
+id
+integer
+
+The ID of the case.
+
+account_name
+string or null
+
+The name of the account that this payment is associated with.
+
+attorney
+object or null
+
+The attorney who created the invoices associated with this payment.
+
+id
+integer
+client
+object or null
+
+The payer of the invoices associated with this payment.
+
+id
+integer
+invoice_number
+string
+
+The invoice number that this payment is associated with.
+
+created_at
+string
+
+The date the invoice payment was created in ISO 8601 date/time format.
+
+updated_at
+string
+
+The date the invoice payment was updated in ISO 8601 date/time format.
+
+Request Sample: Shell / cURL
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/invoice_payments \
+  --header 'Accept: application/json'
+Response Example
+1
+[
+2
+  {
+3
+    "id": 0,
+4
+    "amount": 0,
+5
+    "notes": "string",
+6
+    "date": "string",
+7
+    "invoice": {
+8
+      "id": 0
+9
+    },
+10
+    "status": "string",
+11
+    "transaction_type": "string",
+12
+    "case": {
+13
+      "id": 0
+14
+    },
+15
+    "account_name": "string",
+16
+    "attorney": {
+17
+      "id": 0
+18
+    },
+19
+    "client": {
+20
+      "id": 0
+21
+    },
+22
+    "invoice_number": "string",
+23
+    "created_at": "string",
+24
+    "updated_at": "string"
+25
+  }
+26
+]

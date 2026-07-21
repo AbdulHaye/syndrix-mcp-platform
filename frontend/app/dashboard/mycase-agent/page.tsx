@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Topbar from "@/components/Topbar";
 import {
   runMyCaseAgent,
@@ -13,6 +13,7 @@ import {
   getMyCaseChatSession,
   saveMyCaseChatSession,
   deleteMyCaseChatSession,
+  type MyCaseStatus,
 } from "@/lib/api";
 import { getAuth } from "@/lib/auth";
 import { useToast } from "@/lib/toast";
@@ -82,13 +83,40 @@ function KeyValueView({ item }: { item: RecordRow }) {
   );
 }
 
-function RecordsTable({ toolName, items }: { toolName: string; items: RecordRow[] }) {
-  const columns = deriveColumns(items);
+// Above this row count, rendering every <tr> up front visibly slows the page down
+// (thousands of DOM nodes, expensive to lay out/scroll/diff) — below it, plain
+// rendering is simpler and virtualization math just adds risk for no benefit.
+const VIRTUALIZE_THRESHOLD = 200;
+const ROW_HEIGHT = 27; // px — matches this table's fixed padding + font-size, so scroll math stays exact
+const TABLE_MAX_HEIGHT = 340; // px — must match the scroll container's maxHeight below
+const OVERSCAN_ROWS = 10; // extra rows rendered past each edge of the visible window, so fast scrolling doesn't flash blank space
+
+const RecordsTable = memo(function RecordsTable({ toolName, items }: { toolName: string; items: RecordRow[] }) {
+  const columns = useMemo(() => deriveColumns(items), [items]);
+  // Each cell's display string is computed ONCE here and reused for both the
+  // visible text and the title tooltip (previously flattenValue ran twice per
+  // cell) — memoized so it doesn't redo this scan on every unrelated re-render.
+  const rows = useMemo(
+    () => items.map((item) => columns.map((col) => flattenValue(item[col]))),
+    [items, columns]
+  );
+
+  const [scrollTop, setScrollTop] = useState(0);
+  const virtualize = rows.length > VIRTUALIZE_THRESHOLD;
+  const startIndex = virtualize ? Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN_ROWS) : 0;
+  const visibleRowCount = virtualize ? Math.ceil(TABLE_MAX_HEIGHT / ROW_HEIGHT) + OVERSCAN_ROWS * 2 : rows.length;
+  const endIndex = virtualize ? Math.min(rows.length, startIndex + visibleRowCount) : rows.length;
+  const topPad = virtualize ? startIndex * ROW_HEIGHT : 0;
+  const bottomPad = virtualize ? (rows.length - endIndex) * ROW_HEIGHT : 0;
 
   function onDownload() {
     const csv = itemsToCsv(items, columns);
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
     downloadCsv(`${toolName}-${stamp}.csv`, csv);
+  }
+
+  function onScroll(e: React.UIEvent<HTMLDivElement>) {
+    if (virtualize) setScrollTop(e.currentTarget.scrollTop);
   }
 
   return (
@@ -108,7 +136,10 @@ function RecordsTable({ toolName, items }: { toolName: string; items: RecordRow[
           Download CSV
         </button>
       </div>
-      <div style={{ maxHeight: 340, overflow: "auto", border: "1px solid #e2e8f0", borderRadius: 8, minWidth: 0 }}>
+      <div
+        onScroll={onScroll}
+        style={{ maxHeight: TABLE_MAX_HEIGHT, overflow: "auto", border: "1px solid #e2e8f0", borderRadius: 8, minWidth: 0 }}
+      >
         <table style={{ borderCollapse: "collapse", fontSize: "0.66rem", width: "100%" }}>
           <thead style={{ position: "sticky", top: 0, background: "#f1f5f9", zIndex: 1 }}>
             <tr>
@@ -126,28 +157,38 @@ function RecordsTable({ toolName, items }: { toolName: string; items: RecordRow[
             </tr>
           </thead>
           <tbody>
-            {items.map((item, i) => (
-              <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                {columns.map((col) => (
+            {topPad > 0 && (
+              <tr aria-hidden="true" style={{ height: topPad }}>
+                <td colSpan={columns.length} style={{ padding: 0, border: "none" }} />
+              </tr>
+            )}
+            {rows.slice(startIndex, endIndex).map((rowValues, i) => (
+              <tr key={startIndex + i} style={{ borderBottom: "1px solid #f1f5f9", height: ROW_HEIGHT }}>
+                {rowValues.map((val, ci) => (
                   <td
-                    key={col}
+                    key={columns[ci]}
                     style={{
                       padding: "0.35rem 0.6rem", color: "#1e293b",
                       whiteSpace: "nowrap", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis",
                     }}
-                    title={flattenValue(item[col])}
+                    title={val}
                   >
-                    {flattenValue(item[col])}
+                    {val}
                   </td>
                 ))}
               </tr>
             ))}
+            {bottomPad > 0 && (
+              <tr aria-hidden="true" style={{ height: bottomPad }}>
+                <td colSpan={columns.length} style={{ padding: 0, border: "none" }} />
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
     </div>
   );
-}
+});
 
 // Tools that only exist to resolve names -> ids/labels for another call (case
 // stages, custom fields, practice areas, etc.) — never what the user actually asked
@@ -352,11 +393,24 @@ function primaryResultGroups(steps: MyCaseAgentStep[]): { tool: string; items: R
 // detail. Only the model's reply text and the actual result data (below) are ever
 // shown; failures are reported through the model's own prose (CORE RULES already
 // require it to state failures plainly), not a separate technical error panel.
-function MessageBubble({ msg }: { msg: MyCaseChatMessage }) {
+// Memoized so typing in the composer (or any other unrelated state change in the
+// parent) doesn't force React to re-render and re-diff every past message —
+// including any large result tables already on screen, which is where the actual
+// rendering cost lives. `msg` keeps a stable object reference across re-renders
+// for any message that isn't itself changing, so this comparison is cheap and
+// correct: React.memo's default shallow-prop-equality skips the re-render
+// whenever the same `msg` object is passed again.
+const MessageBubble = memo(function MessageBubble({ msg }: { msg: MyCaseChatMessage }) {
   const isUser = msg.role === "user";
   const steps = msg.steps ?? [];
-  const resultGroups = isUser ? [] : primaryResultGroups(steps);
-  const downloads = isUser ? [] : steps.map(stepDownloadInfo).filter((d): d is DownloadInfo => d !== null);
+  // primaryResultGroups/the download list rebuild real record-table data from
+  // steps — memoized on `steps` so they're computed once per message, not on
+  // every render this component's memo above didn't manage to skip.
+  const resultGroups = useMemo(() => (isUser ? [] : primaryResultGroups(steps)), [isUser, steps]);
+  const downloads = useMemo(
+    () => (isUser ? [] : steps.map(stepDownloadInfo).filter((d): d is DownloadInfo => d !== null)),
+    [isUser, steps]
+  );
 
   return (
     <div className={`d-flex ${isUser ? "justify-content-end" : "justify-content-start"}`} style={{ minWidth: 0 }}>
@@ -409,20 +463,37 @@ function MessageBubble({ msg }: { msg: MyCaseChatMessage }) {
       </div>
     </div>
   );
+});
+
+/** "5400" -> "1h 30m"; used both for a countdown ("expires in 1h 30m") and an
+ * elapsed duration ("expired 1h 30m ago"). Always shows at least minutes so a
+ * <1 minute value doesn't just read "0m". */
+function formatDuration(totalSeconds: number): string {
+  const s = Math.max(0, Math.round(totalSeconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return `${s}s`;
 }
 
 function MyCaseConnection({ onConnectedChange }: { onConnectedChange?: (c: boolean) => void }) {
   const toast = useToast();
-  const [connected, setConnected] = useState<boolean | null>(null);
+  const [status, setStatus] = useState<MyCaseStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  // Ticks once a minute purely to force a re-render so the countdown/elapsed
+  // text stays live between actual status re-fetches — expires_at is a fixed
+  // timestamp, so the remaining time is recomputed from it on every tick
+  // without needing a network call.
+  const [, setTick] = useState(0);
 
   const refresh = useCallback(async () => {
     try {
       const s = await getMyCaseStatus();
-      setConnected(s.connected);
+      setStatus(s);
       onConnectedChange?.(s.connected);
     } catch {
-      setConnected(false);
+      setStatus({ connected: false, expires_at: null, expires_in_seconds: null, expired: false, auto_renews: false });
       onConnectedChange?.(false);
     }
   }, [onConnectedChange]);
@@ -438,6 +509,21 @@ function MyCaseConnection({ onConnectedChange }: { onConnectedChange?: (c: boole
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
   }, [refresh]);
+
+  // Also re-fetch periodically (not just on focus) — a background MyCase agent
+  // call can silently refresh the token via _get_valid_token() at any time, and
+  // this picks up the new real expiry instead of counting down/past a stale one.
+  useEffect(() => {
+    const id = setInterval(refresh, 5 * 60_000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  // The countdown/elapsed-time tick — separate from the status re-fetch above,
+  // since this only needs to force a re-render, not hit the network.
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   async function connect() {
     setBusy(true);
@@ -481,19 +567,56 @@ function MyCaseConnection({ onConnectedChange }: { onConnectedChange?: (c: boole
     }
   }
 
-  if (connected === null) {
+  if (status === null) {
     return <span style={{ fontSize: "0.78rem", color: "#94a3b8" }}>Checking MyCase…</span>;
   }
 
-  if (connected) {
+  if (status.connected) {
+    // Recomputed on every render (including the once-a-minute tick above) from
+    // the fixed expires_at timestamp — no network call needed to keep this live.
+    const remaining = status.expires_at != null ? status.expires_at - Math.floor(Date.now() / 1000) : null;
+    const isExpired = status.expired || (remaining != null && remaining <= 0);
+    const deadConnection = isExpired && !status.auto_renews;
+
+    let label = "MyCase connected";
+    let detail: string | null = null;
+    if (remaining != null) {
+      detail = isExpired
+        ? (status.auto_renews ? `expired ${formatDuration(-remaining)} ago — renews on next use` : `expired ${formatDuration(-remaining)} ago`)
+        : `expires in ${formatDuration(remaining)}`;
+    } else if (isExpired) {
+      // expired=true from the backend but no expires_at (shouldn't normally
+      // happen together, but stay honest rather than silently showing nothing).
+      detail = status.auto_renews ? "expired — renews on next use" : "expired";
+    }
+    if (deadConnection) label = "MyCase token expired";
+
+    const colors = deadConnection
+      ? { color: "#991b1b", background: "#fee2e2" } // red — genuinely broken, reconnect required
+      : isExpired
+        ? { color: "#92400e", background: "#fef3c7" } // amber — expired but will self-heal
+        : { color: "#166534", background: "#dcfce7" }; // green — healthy
+
     return (
       <div className="d-flex align-items-center gap-2">
         <span
-          style={{ fontSize: "0.72rem", fontWeight: 600, color: "#166534", background: "#dcfce7", borderRadius: 20, padding: "3px 10px" }}
+          style={{ fontSize: "0.72rem", fontWeight: 600, ...colors, borderRadius: 20, padding: "3px 10px" }}
+          title={status.expires_at != null ? new Date(status.expires_at * 1000).toLocaleString() : undefined}
         >
-          <i className="bi bi-check-circle-fill me-1" />
-          MyCase connected
+          <i className={`bi ${deadConnection ? "bi-exclamation-triangle-fill" : "bi-check-circle-fill"} me-1`} />
+          {label}
+          {detail && <span style={{ fontWeight: 500, opacity: 0.85 }}> · {detail}</span>}
         </span>
+        {deadConnection && (
+          <button
+            className="btn btn-sm"
+            style={{ background: "#0b6fcc", color: "white", border: "none", borderRadius: 8, fontSize: "0.75rem", fontWeight: 600 }}
+            onClick={connect}
+            disabled={busy}
+          >
+            {busy ? <><span className="spinner-border spinner-border-sm me-1" />Connecting…</> : "Reconnect"}
+          </button>
+        )}
         <button
           className="btn btn-sm"
           style={{ background: "white", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: "0.75rem", color: "#64748b" }}
@@ -532,6 +655,7 @@ function ModelSelector() {
   const [openai, setOpenai] = useState<string[]>([]);
   const [anthropic, setAnthropic] = useState<string[]>([]);
   const [zai, setZai] = useState<string[]>([]);
+  const [openrouter, setOpenrouter] = useState<string[]>([]);
   const [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -546,6 +670,7 @@ function ModelSelector() {
         setOpenai(res.openai ?? []);
         setAnthropic(res.anthropic ?? []);
         setZai(res.zai ?? []);
+        setOpenrouter(res.openrouter ?? []);
         setSelected(res.selected);
       } catch {
         /* ignore */
@@ -579,7 +704,7 @@ function ModelSelector() {
         style={{ fontSize: "0.78rem", borderRadius: 8, width: 190, flex: "0 0 auto" }}
       >
         {loading && <option>Loading models…</option>}
-        {!loading && selected && ![...ollama, ...google, ...groq, ...mistral, ...openai, ...anthropic, ...zai].includes(selected) && (
+        {!loading && selected && ![...ollama, ...google, ...groq, ...mistral, ...openai, ...anthropic, ...zai, ...openrouter].includes(selected) && (
           <option value={selected}>{label(selected)}</option>
         )}
         {ollama.length > 0 && (
@@ -617,8 +742,14 @@ function ModelSelector() {
             {zai.map((m) => <option key={m} value={m}>{label(m)}</option>)}
           </optgroup>
         )}
+        {openrouter.length > 0 && (
+          <optgroup label="OpenRouter">
+            {openrouter.map((m) => <option key={m} value={m}>{label(m)}</option>)}
+          </optgroup>
+        )}
         {!loading && ollama.length === 0 && google.length === 0 && groq.length === 0 &&
-          mistral.length === 0 && openai.length === 0 && anthropic.length === 0 && zai.length === 0 && (
+          mistral.length === 0 && openai.length === 0 && anthropic.length === 0 && zai.length === 0 &&
+          openrouter.length === 0 && (
           <option value="">No models found</option>
         )}
       </select>

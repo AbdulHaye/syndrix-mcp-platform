@@ -1,0 +1,195 @@
+Create a Message Thread for a Case
+POST
+https://external-integrations.mycase.com/v1/cases/{id}/message_threads
+
+Create a message thread for a specified case.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the case you want to create a message thread for.
+
+Body
+application/json
+application/json
+subject
+string
+required
+
+The subject of the message thread.
+
+first_message_body
+string
+required
+
+The body text of the first message in the thread.
+
+sender
+object
+
+The sender of the first message in this message thread.
+
+id
+integer
+client_recipients
+array[object]
+
+Any clients you want associated with this message thread.
+
+id
+integer
+
+The ID of the client to associate with the message thread.
+
+staff_recipients
+array[object]
+
+Any staff you want associated with this message thread.
+
+id
+integer
+
+The ID of the staff to associate with the message thread.
+
+Responses
+201
+
+Created
+
+Body
+application/json
+application/json
+responses
+/
+201
+id
+number
+
+A unique identifier for the message thread.
+
+subject
+string
+
+The subject of the message thread.
+
+first_message_body
+string
+
+The body text of the first message in the thread.
+
+sender
+object
+
+The sender of the first message in this message thread.
+
+id
+integer
+case
+object or null
+
+The case associated with this message thread, if there is one.
+
+id
+number
+clients
+array[object]
+
+Any clients associated with this message thread.
+
+id
+integer
+
+The ID of the client.
+
+staff
+array[object]
+
+Any staff associated with this message thread.
+
+id
+integer
+
+The ID of the staff.
+
+created_at
+string
+
+The date the message thread was created in ISO 8601 date/time format.
+
+updated_at
+string
+
+The date the message thread was updated in ISO 8601 date/time format.
+
+Request Sample: Shell / cURL
+curl --request POST \
+  --url https://external-integrations.mycase.com/v1/cases/{id}/message_threads \
+  --header 'Accept: application/json' \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "subject": "string",
+  "first_message_body": "string",
+  "sender": {
+    "id": 0
+  },
+  "client_recipients": [
+    {
+      "id": 0
+    }
+  ],
+  "staff_recipients": [
+    {
+      "id": 0
+    }
+  ]
+}'
+Response Example
+1
+{
+2
+  "id": 0,
+3
+  "subject": "string",
+4
+  "first_message_body": "string",
+5
+  "sender": {
+6
+    "id": 0
+7
+  },
+8
+  "case": {
+9
+    "id": 0
+10
+  },
+11
+  "clients": [
+12
+    {
+13
+      "id": 0
+14
+    }
+15
+  ],
+16
+  "staff": [
+17
+    {
+18
+      "id": 0
+19
+    }
+20
+  ],
+21
+  "created_at": "string",
+22
+  "updated_at": "string"
+23
+}

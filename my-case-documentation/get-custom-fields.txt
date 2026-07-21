@@ -1,0 +1,145 @@
+Get Custom Fields
+GET
+https://external-integrations.mycase.com/v1/custom_fields
+
+Get all firm custom fields viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+
+OK
+
+Headers
+Item-Count
+number
+
+The total number of results.
+
+Link
+string
+
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+application/json
+application/json
+responses
+/
+200
+array of:
+id
+integer
+
+A unique identifier for the Custom Field.
+
+name
+string
+
+The name of the Custom Field.
+
+parent_type
+string
+
+The parent resource type of the Custom Field. One of case | client | company | expense | time | time_and_expense.
+
+field_type
+string
+
+The field type of the Custom Field. One of short_text | long_text | numeric | boolean | date | list | currency.
+
+list_options
+array[object]
+
+If field_type is specified as list, this field will be returned with an array of list options.
+
+key
+string
+
+The unique key identifier for this list option.
+
+option
+string
+
+The name of this list option.
+
+created_at
+string
+
+An ISO 8601 timestamp of when the list option was created.
+
+updated_at
+string
+
+An ISO 8601 timestamp of when the list option was last updated.
+
+created_at
+string
+
+An ISO 8601 timestamp of when the Custom Field was created.
+
+updated_at
+string
+
+An ISO 8601 timestamp of when the Custom Field was last updated.
+
+Request Sample: Shell / cURL
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/custom_fields \
+  --header 'Accept: application/json'
+Response Example
+1
+[
+2
+  {
+3
+    "id": 0,
+4
+    "name": "string",
+5
+    "parent_type": "string",
+6
+    "field_type": "string",
+7
+    "list_options": [
+8
+      {
+9
+        "key": "string",
+10
+        "option": "string",
+11
+        "created_at": "string",
+12
+        "updated_at": "string"
+13
+      }
+14
+    ],
+15
+    "created_at": "string",
+16
+    "updated_at": "string"
+17
+  }
+18
+]

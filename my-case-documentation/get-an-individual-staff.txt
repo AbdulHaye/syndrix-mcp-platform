@@ -1,0 +1,159 @@
+Get an Individual Staff
+GET
+https://external-integrations.mycase.com/v1/staff/{id}
+
+Allows you to view a specfic staff member, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the lead you want to view or update.
+
+Responses
+200
+
+OK
+
+Body
+application/json
+application/json
+id
+integer
+
+The unique ID of the staff.
+
+email
+string
+
+The email of the staff.
+
+first_name
+string
+
+The first name of the staff.
+
+middle_initial
+string
+
+The middle name (or initial) of the staff.
+
+last_name
+string
+
+The last name of the staff.
+
+address
+AddressNestedResponse
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+cell_phone_number
+string
+
+The staff's cell phone number.
+
+work_phone_number
+string
+
+The staff's work phone number.
+
+home_phone_number
+string
+
+The staff's home phone number.
+
+type
+string
+
+The type of the staff.
+
+title
+string
+
+The title of the staff.
+
+active
+boolean
+
+Whether or not this staff is currently active.
+
+default_hourly_rate
+number
+
+This staff member's default billing rate.
+
+updated_at
+string
+
+When the staff was last updated.
+
+created_at
+string
+
+When the staff was created.
+
+Request Sample: Shell / cURL
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/staff/{id} \
+  --header 'Accept: application/json'
+Response Example
+1
+{
+2
+  "id": 0,
+3
+  "email": "string",
+4
+  "first_name": "string",
+5
+  "middle_initial": "string",
+6
+  "last_name": "string",
+7
+  "address": {
+8
+    "address1": "string",
+9
+    "address2": "string",
+10
+    "city": "string",
+11
+    "state": "string",
+12
+    "zip_code": "string",
+13
+    "country": "string"
+14
+  },
+15
+  "cell_phone_number": "string",
+16
+  "work_phone_number": "string",
+17
+  "home_phone_number": "string",
+18
+  "type": "string",
+19
+  "title": "string",
+20
+  "active": true,
+21
+  "default_hourly_rate": 0,
+22
+  "updated_at": "string",
+23
+  "created_at": "string"
+24
+}

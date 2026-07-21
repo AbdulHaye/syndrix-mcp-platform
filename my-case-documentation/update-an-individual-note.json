@@ -1,0 +1,11 @@
+{
+  "name": "Update an Individual Note",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/b9dc80d4e95fb-update-an-individual-note",
+  "method": "PUT",
+  "path": null,
+  "description": "Allows you to edit a specfic note, based on the authorized user/firm priviledges.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Update an Individual Note\nPUT\nhttps://external-integrations.mycase.com/v1/notes/{id}\n\nAllows you to edit a specfic note, based on the authorized user/firm priviledges.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the note you want to view or update.\n\nBody\napplication/json\napplication/json\nsubject\nstring\nrequired\n\nSubject of the note.\n\nnote\nstring\nrequired\n\nThe body text of the note.\n\ndate\nstring\nrequired\n\nThe date of the note in ISO 8601 date/time format.\n\nResponses\n204\n\nNo Content\n\nRequest Sample: Shell / cURL\ncurl --request PUT \\\n  --url https://external-integrations.mycase.com/v1/notes/{id} \\\n  --header 'Content-Type: application/json' \\\n  --data '{\n  \"subject\": \"string\",\n  \"note\": \"string\",\n  \"date\": \"string\"\n}'"
+}

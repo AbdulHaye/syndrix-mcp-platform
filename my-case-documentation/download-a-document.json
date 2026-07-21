@@ -1,0 +1,11 @@
+{
+  "name": "Download a Document",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/7819bbacb18c5-download-a-document",
+  "method": "GET",
+  "path": null,
+  "description": "Download a specific document.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Download a Document\nGET\nhttps://external-integrations.mycase.com/v1/documents/{id}/data\n\nDownload a specific document.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the document to download\n\nResponses\n302\n\nFound\n\nHeaders\nLocation\nstring\n\nTemporary URL to download document data (valid for 1 minute)\n\nRequest Sample: Shell / cURL\ncurl --request GET \\\n  --url https://external-integrations.mycase.com/v1/documents/{id}/data"
+}

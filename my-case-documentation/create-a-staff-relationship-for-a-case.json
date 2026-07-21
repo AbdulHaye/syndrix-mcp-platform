@@ -1,0 +1,11 @@
+{
+  "name": "Create a Staff Relationship for a Case",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/be476c8739c2a-create-a-staff-relationship-for-a-case",
+  "method": "POST",
+  "path": null,
+  "description": "Create a staff relationship for a specified case.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Create a Staff Relationship for a Case\nPOST\nhttps://external-integrations.mycase.com/v1/cases/{id}/relationships/staff\n\nCreate a staff relationship for a specified case.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the case you want to add staff to.\n\nBody\napplication/json\napplication/json\nstaff\narray[object]\n\nA list of staff to add to the case.\n\nid\ninteger\nrequired\nlead_lawyer\nboolean\n\nA boolean specifying if the staff member associated to this case is the lead lawyer.\n\noriginating_lawyer\nboolean\n\nA boolean specifying if the staff member associated to this case is the originating lawyer.\n\nResponses\n204\n\nNo Content\n\nRequest Sample: Shell / cURL\ncurl --request POST \\\n  --url https://external-integrations.mycase.com/v1/cases/{id}/relationships/staff \\\n  --header 'Content-Type: application/json' \\\n  --data '{\n  \"staff\": [\n    {\n      \"id\": 0,\n      \"lead_lawyer\": true,\n      \"originating_lawyer\": true\n    }\n  ]\n}'"
+}

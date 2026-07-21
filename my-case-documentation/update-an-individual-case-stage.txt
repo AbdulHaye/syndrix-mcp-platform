@@ -1,0 +1,35 @@
+Update an Individual Case Stage
+PUT
+https://external-integrations.mycase.com/v1/case_stages/{id}
+
+Allows you to edit a specfic case stage, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the case stage you want to view or update.
+
+Body
+application/json
+application/json
+name
+string
+required
+
+The name of the case stage.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request PUT \
+  --url https://external-integrations.mycase.com/v1/case_stages/{id} \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "name": "string"
+}'

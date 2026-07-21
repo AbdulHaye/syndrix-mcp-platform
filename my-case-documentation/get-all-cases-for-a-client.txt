@@ -1,0 +1,436 @@
+Get All Cases for a Client
+GET
+https://external-integrations.mycase.com/v1/clients/{id}/cases
+
+Get all cases associated with a specific client.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the client you want to get cases for.
+
+Responses
+200
+
+OK
+
+Headers
+Item-Count
+number
+
+The total number of results.
+
+Link
+string
+
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+application/json
+application/json
+responses
+/
+200
+array of:
+id
+number
+
+A unique identifier for the case.
+
+name
+string
+
+Name of the case.
+
+case_number
+string or null
+
+The case number of the case.
+
+description
+string
+
+The description of the case.
+
+opened_date
+string or null
+
+The date the case was opened in ISO 8601 date format.
+
+closed_date
+string or null
+
+The date the case was closed in ISO 8601 date format.
+
+sol_date
+string or null
+
+The statue of limitations date for the case in ISO 8601 date format.
+
+practice_area
+string or null
+
+The case practice area, as defined in MyCase.
+
+case_stage
+string or null
+
+The stage the case is currently in, as defined in MyCase.
+
+status
+string
+
+The status of the case. One of open or closed.
+
+outstanding_balance
+number
+
+The outstanding balance of this case.
+
+billing_contact
+object
+
+The billing contact for this case.
+
+id
+integer
+
+The ID of the client or company assigned as the billing contact for this case.
+
+billing_type
+string
+
+The billing method for this case. One of "" | "hourly" | "contingency" | "flat" | "mixed" | "pro_bono".
+
+contacts
+any
+deprecated
+
+[DEPRECATED] This field has been replaced by the clients field for consistency. Please use the clients field instead. Use of both fields will result in an error.
+
+clients
+array[ClientNestedResponse]
+
+Any clients associated with the case. By default, each resource will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+id
+integer
+first_name
+string
+last_name
+string
+middle_initial
+string
+deprecated
+
+[DEPRECATED] This field has been replaced by the middle_name field for consistency. Please use the middle_name field instead. Use of both fields will result in an error.
+
+middle_name
+string
+email
+string
+cell_phone_number
+string
+work_phone_number
+string
+home_phone_number
+string
+fax_phone_number
+string
+contact_group
+string
+
+The client's contact group.
+
+birthdate
+string
+
+The clients date of birth in ISO-8601 date format.
+
+created_at
+string
+updated_at
+string
+companies
+array[CompanyNestedResponse]
+
+Any companies associated with the case.
+
+id
+integer
+
+The ID of the company.
+
+staff
+array[StaffNestedResponse]
+
+Any firm members associated to the case.
+
+id
+number
+
+The ID of the staff member.
+
+lead_lawyer
+boolean
+
+A boolean that lets you know if the staff member associated to this case is the lead lawyer. This field is not required on a case.
+
+originating_lawyer
+boolean
+
+A boolean that lets you know if the staff member associated to this case is the originating lawyer. This field is not required on a case.
+
+case_rate
+string or null
+
+The applicable hourly rate for this staff member on this case. The source of this value is indicated by rate_type. May be null when the case is configured to use a rate plan but no matching rate plan is assigned.
+
+rate_type
+string
+
+Indicates which rate source case_rate was resolved from. "default rate" means the staff member's personal default hourly rate is used. "case rate" means a rate override was configured specifically for this staff member on this case. "rate plan rate" means the rate was looked up from the rate plan assigned to this case, using the staff member's job title (falling back to the rate plan's default rate if no matching title is found).
+
+Allowed values:
+default rate
+case rate
+rate plan rate
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+
+The value of this custom field.
+
+created_at
+string
+
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+office
+object
+
+The office associated to the case.
+
+id
+integer
+
+The ID of the office.
+
+name
+string
+
+The name of the office.
+
+fax_phone
+string
+
+The fax phone number of the office.
+
+main_phone
+string
+
+The main phone number of the office.
+
+address
+AddressNestedResponse
+updated_at
+string
+
+The date the office was updated in ISO 8601 date/time format.
+
+created_at
+string
+
+The date the office was created in ISO 8601 date/time format.
+
+updated_at
+string
+
+The date the case was updated in ISO 8601 date/time format.
+
+created_at
+string
+
+The date the case was created in ISO 8601 date/time format.
+
+Request Sample: Shell / cURL
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/clients/{id}/cases \
+  --header 'Accept: application/json'
+Response Example
+1
+[
+2
+  {
+3
+    "id": 0,
+4
+    "name": "string",
+5
+    "case_number": "string",
+6
+    "description": "string",
+7
+    "opened_date": "string",
+8
+    "closed_date": "string",
+9
+    "sol_date": "string",
+10
+    "practice_area": "string",
+11
+    "case_stage": "string",
+12
+    "status": "string",
+13
+    "outstanding_balance": 0,
+14
+    "billing_contact": {
+15
+      "id": 0
+16
+    },
+17
+    "billing_type": "string",
+18
+    "contacts": null,
+19
+    "clients": [
+20
+      {
+21
+        "id": 0,
+22
+        "first_name": "string",
+23
+        "last_name": "string",
+24
+        "middle_initial": "string",
+25
+        "middle_name": "string",
+26
+        "email": "string",
+27
+        "cell_phone_number": "string",
+28
+        "work_phone_number": "string",
+29
+        "home_phone_number": "string",
+30
+        "fax_phone_number": "string",
+31
+        "contact_group": "string",
+32
+        "birthdate": "string",
+33
+        "created_at": "string",
+34
+        "updated_at": "string"
+35
+      }
+36
+    ],
+37
+    "companies": [
+38
+      {
+39
+        "id": 0
+40
+      }
+41
+    ],
+42
+    "staff": [
+43
+      {
+44
+        "id": 0,
+45
+        "lead_lawyer": true,
+46
+        "originating_lawyer": true,
+47
+        "case_rate": "string",
+48
+        "rate_type": "default rate"
+49
+      }
+50
+    ],
+51
+    "custom_field_values": [
+52
+      {
+53
+        "custom_field": {
+54
+          "id": 0,
+55
+          "field_type": "string"
+56
+        },
+57
+        "value": "string",
+58
+        "created_at": "string",
+59
+        "updated_at": "string"
+60
+      }
+61
+    ],
+62
+    "office": {
+63
+      "id": 0,
+64
+      "name": "string",
+65
+      "fax_phone": "string",
+66
+      "main_phone": "string",
+67
+      "address": {
+68
+        "address1": "string",
+69
+        "address2": "string",
+70
+        "city": "string",
+71
+        "state": "string",
+72
+        "zip_code": "string",
+73
+        "country": "string"
+74
+      },
+75
+      "updated_at": "string",
+76
+      "created_at": "string"
+77
+    },
+78
+    "updated_at": "string",
+79
+    "created_at": "string"
+80
+  }
+81
+]

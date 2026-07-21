@@ -1,0 +1,23 @@
+Delete an Individual People Group
+DELETE
+https://external-integrations.mycase.com/v1/people_groups/{id}
+
+Allows you to delete a specfic people group, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the people group you want to view or update.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request DELETE \
+  --url https://external-integrations.mycase.com/v1/people_groups/{id} \
+  --header 'Content-Type: application/json'

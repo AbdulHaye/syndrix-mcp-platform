@@ -1,0 +1,23 @@
+Delete an Individual Company
+DELETE
+https://external-integrations.mycase.com/v1/companies/{id}
+
+Allows you to delete a specfic company, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the company you want to view or update.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request DELETE \
+  --url https://external-integrations.mycase.com/v1/companies/{id} \
+  --header 'Content-Type: application/json'

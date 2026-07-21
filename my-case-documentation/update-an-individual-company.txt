@@ -1,0 +1,115 @@
+Update an Individual Company
+PUT
+https://external-integrations.mycase.com/v1/companies/{id}
+
+Allows you to edit a specfic company, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the company you want to view or update.
+
+Body
+application/json
+application/json
+name
+string
+required
+email
+string
+website
+string
+main_phone_number
+string
+fax_phone_number
+string
+address
+AddressRequest
+
+If you provide any address object then all address properties need to be included.
+
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+notes
+string
+
+Any additional information you want to keep on this company. It is seen by other firm members, but is not visible to clients.
+
+cases
+array[object]
+id
+integer
+clients
+array[object]
+id
+integer
+custom_field_values
+array[CustomFieldValueRequest]
+custom_field
+object
+required
+
+The custom field that this value is associated with.
+
+value
+string or number or boolean
+required
+
+The value of this custom field.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request PUT \
+  --url https://external-integrations.mycase.com/v1/companies/{id} \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "name": "string",
+  "email": "string",
+  "website": "string",
+  "main_phone_number": "string",
+  "fax_phone_number": "string",
+  "address": {
+    "address1": "string",
+    "address2": "string",
+    "city": "string",
+    "state": "string",
+    "zip_code": "string",
+    "country": "string"
+  },
+  "notes": "string",
+  "cases": [
+    {
+      "id": 0
+    }
+  ],
+  "clients": [
+    {
+      "id": 0
+    }
+  ],
+  "custom_field_values": [
+    {
+      "custom_field": {
+        "id": 0
+      },
+      "value": "string"
+    }
+  ]
+}'

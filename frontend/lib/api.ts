@@ -189,7 +189,15 @@ export async function deletePodioChatSession(id: string): Promise<{ success: boo
 
 // ── MyCase Agent ──────────────────────────────────────────────────────────────
 
-export async function getMyCaseStatus(): Promise<{ connected: boolean }> {
+export interface MyCaseStatus {
+  connected: boolean;
+  expires_at: number | null; // unix seconds; null when the expiry is unknown (e.g. a pasted token with no refresh_token)
+  expires_in_seconds: number | null; // can be negative once expired; null when unknown
+  expired: boolean;
+  auto_renews: boolean; // true when a refresh_token is on file — an "expired" token above self-heals on next use
+}
+
+export async function getMyCaseStatus(): Promise<MyCaseStatus> {
   return request("/agent/mycase/status");
 }
 
@@ -383,6 +391,7 @@ export async function listLlmModels(agent: "podio" | "mycase" = "podio"): Promis
   openai: string[];
   anthropic: string[];
   zai: string[];
+  openrouter: string[];
   selected: string;
 }> {
   return request(`/llm/models?agent=${agent}`);

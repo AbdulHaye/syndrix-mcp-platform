@@ -1,0 +1,47 @@
+Create a Staff Relationship for an Event
+POST
+https://external-integrations.mycase.com/v1/events/{id}/relationships/staff
+
+Create a staff relationship for a specified event.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the event you want to add staff to.
+
+Body
+application/json
+application/json
+staff
+array[object]
+
+A list of staff to add to the event.
+
+id
+integer
+required
+required
+boolean
+
+Whether or not this staff member will be marked as required to attend on this event.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request POST \
+  --url https://external-integrations.mycase.com/v1/events/{id}/relationships/staff \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "staff": [
+    {
+      "id": 0,
+      "required": true
+    }
+  ]
+}'

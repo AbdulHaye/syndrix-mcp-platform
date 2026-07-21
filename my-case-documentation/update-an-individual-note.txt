@@ -1,0 +1,49 @@
+Update an Individual Note
+PUT
+https://external-integrations.mycase.com/v1/notes/{id}
+
+Allows you to edit a specfic note, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the note you want to view or update.
+
+Body
+application/json
+application/json
+subject
+string
+required
+
+Subject of the note.
+
+note
+string
+required
+
+The body text of the note.
+
+date
+string
+required
+
+The date of the note in ISO 8601 date/time format.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request PUT \
+  --url https://external-integrations.mycase.com/v1/notes/{id} \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "subject": "string",
+  "note": "string",
+  "date": "string"
+}'

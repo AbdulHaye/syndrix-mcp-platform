@@ -1,0 +1,163 @@
+Get Events
+GET
+https://external-integrations.mycase.com/v1/events
+
+Get all firm events viewable by the authorized user.
+
+Request
+Query Parameters
+filter[updated_after]
+string
+
+Filters the response to return only resources that are created or updated after a specified date/time. ISO 8610 date format. Results are inclusive of the date/time entered. Can include time but does not need to.
+
+Example:
+?filter[updated_after]=2022-03-17T21:00:00Z
+page_size
+number
+
+The ability to specify the number of resources that are returned per response page.
+
+>= 1
+<= 1000
+Default:
+25
+Example:
+?page_size=100
+Responses
+200
+
+OK
+
+Headers
+Item-Count
+number
+
+The total number of results.
+
+Link
+string
+
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+application/json
+application/json
+responses
+/
+200
+array of:
+id
+integer
+name
+string
+
+The name of this event.
+
+description
+string
+start
+string
+
+The start date/time of this event in ISO 8601 date format.
+
+end
+string
+
+The end date/time of this event in ISO 8601 date format.
+
+all_day
+boolean
+
+Whether or not this is an all day event.
+
+private
+boolean
+
+Whether or not this is a private event.
+
+event_type
+string
+
+The type of this event.
+
+location
+object
+
+The location associated with this event, if there is one.
+
+id
+number
+case
+object
+
+The case associated with this event, if there is one.
+
+id
+integer
+staff
+array[object]
+
+All staff associated with this event.
+
+id
+integer
+created_at
+string
+updated_at
+string
+Request Sample: Shell / cURL
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/events \
+  --header 'Accept: application/json'
+Response Example
+1
+[
+2
+  {
+3
+    "id": 0,
+4
+    "name": "string",
+5
+    "description": "string",
+6
+    "start": "string",
+7
+    "end": "string",
+8
+    "all_day": true,
+9
+    "private": true,
+10
+    "event_type": "string",
+11
+    "location": {
+12
+      "id": 0
+13
+    },
+14
+    "case": {
+15
+      "id": 0
+16
+    },
+17
+    "staff": [
+18
+      {
+19
+        "id": 0
+20
+      }
+21
+    ],
+22
+    "created_at": "string",
+23
+    "updated_at": "string"
+24
+  }
+25
+]

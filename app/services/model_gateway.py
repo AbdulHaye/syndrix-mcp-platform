@@ -164,7 +164,7 @@ class ModelGateway:
     def _split_model(model: str) -> tuple[str, str]:
         """Parse a 'provider:model' string. Defaults to the ollama provider."""
         if ":" in model and model.split(":", 1)[0] in (
-            "ollama", "google", "groq", "mistral", "openai", "anthropic", "zai"
+            "ollama", "google", "groq", "mistral", "openai", "anthropic", "zai", "openrouter"
         ):
             provider, name = model.split(":", 1)
             return provider, name
@@ -199,6 +199,8 @@ class ModelGateway:
             return await self._anthropic_chat(messages, tools, name, num_predict)
         if provider == "zai":
             return await self._zai_chat(messages, tools, name, num_predict)
+        if provider == "openrouter":
+            return await self._openrouter_chat(messages, tools, name, num_predict)
         return await self._ollama_chat(messages, tools, name, num_predict)
 
     async def _ollama_chat(
@@ -410,6 +412,12 @@ class ModelGateway:
     # endpoint — used as a fallback in list_zai_models() so a valid key never shows
     # an empty dropdown just because that endpoint 404s.
     _ZAI_KNOWN_MODELS = ("glm-5.2", "glm-5.1", "glm-4.7", "glm-4.7-flash", "glm-4.6", "glm-4.6v-flash")
+    # OpenRouter — a single OpenAI-compatible gateway in front of ~300 models from
+    # every major provider (Anthropic, OpenAI, Google, Meta, Mistral, DeepSeek,
+    # etc.), useful as a fallback/aggregator when a user wants a specific upstream
+    # model without adding that provider's own key separately. Model ids are
+    # "provider/model" (e.g. "anthropic/claude-3.5-sonnet", "openai/gpt-4o").
+    _OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
     async def _openai_chat(
         self,
@@ -477,6 +485,23 @@ class ModelGateway:
         return await self._openai_compat_chat(
             messages, tools, model_name, num_predict,
             base_url=self._ZAI_BASE, api_key=api_key, provider="Z.ai",
+        )
+
+    async def _openrouter_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model_name: str,
+        num_predict: int,
+    ) -> dict[str, Any]:
+        from app.services.settings_service import get_setting
+
+        api_key = await get_setting("openrouter_api_key")
+        if not api_key:
+            raise RuntimeError("OpenRouter API key is not configured (Settings → OpenRouter).")
+        return await self._openai_compat_chat(
+            messages, tools, model_name, num_predict,
+            base_url=self._OPENROUTER_BASE, api_key=api_key, provider="OpenRouter",
         )
 
     async def _openai_compat_chat(
@@ -950,6 +975,39 @@ class ModelGateway:
             # A genuine auth/network failure — stay empty like every other provider
             # (an invalid key must NOT show models it can't actually call).
             logger.warning("list_zai_models_failed", error=str(exc))
+            return []
+
+    async def list_openrouter_models(self) -> list[str]:
+        from app.services.settings_service import get_setting
+
+        api_key = await get_setting("openrouter_api_key")
+        if not api_key:
+            return []
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{self._OPENROUTER_BASE}/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            names: list[str] = []
+            for m in data.get("data", []):
+                mid = m.get("id")
+                if not mid:
+                    continue
+                # OpenRouter's catalog spans ~300 models across every modality
+                # (text, vision, audio, embeddings) from every upstream provider —
+                # this app's agents all require function-calling, so keep the
+                # dropdown to models that actually declare "tools" support in their
+                # supported_parameters rather than dumping the entire catalog
+                # (most of which would just fail if picked for an agent).
+                if "tools" not in (m.get("supported_parameters") or []):
+                    continue
+                names.append(mid)
+            return sorted(set(names))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("list_openrouter_models_failed", error=str(exc))
             return []
 
     async def list_openai_models(self) -> list[str]:

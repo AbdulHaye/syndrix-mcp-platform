@@ -32,12 +32,12 @@ def _require_bd_or_admin(identity: TeamIdentity) -> None:
         raise HTTPException(status_code=403, detail="The MyCase Agent is available to BD and Admin roles only.")
 
 
-@router.get("/mycase/status", summary="Whether MyCase has an access token configured")
+@router.get("/mycase/status", summary="MyCase connection status, including token expiry")
 async def mycase_status(identity: TeamIdentity = Depends(require_auth)) -> dict[str, Any]:
     _require_bd_or_admin(identity)
     from app.services.mycase_rest import mycase_rest
 
-    return {"connected": await mycase_rest.is_connected()}
+    return await mycase_rest.connection_status()
 
 
 @router.post("/mycase", summary="Run the MyCase agent (LLM + MyCase read-only tools)")

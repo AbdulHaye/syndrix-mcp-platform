@@ -1,0 +1,11 @@
+{
+  "name": "Update a List Option for a Custom Field",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/32c2dc7713015-update-a-list-option-for-a-custom-field",
+  "method": "PUT",
+  "path": null,
+  "description": "Update the name of a specific list option on a custom field.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Update a List Option for a Custom Field\nPUT\nhttps://external-integrations.mycase.com/v1/custom_fields/{id}/list_options/{key}\n\nUpdate the name of a specific list option on a custom field.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the custom field you want to view or update.\n\nkey\nstring\nrequired\n\nThe unique key identifier of the list option to update.\n\nBody\napplication/json\napplication/json\noption_value\nstring\nrequired\n\nThe new name for this list option.\n\nResponses\n204\n\nNo Content\n\nRequest Sample: Shell / cURL\ncurl --request PUT \\\n  --url https://external-integrations.mycase.com/v1/custom_fields/{id}/list_options/{key} \\\n  --header 'Content-Type: application/json' \\\n  --data '{\n  \"option_value\": \"string\"\n}'"
+}

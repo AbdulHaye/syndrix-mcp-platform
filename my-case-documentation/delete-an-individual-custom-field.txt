@@ -1,0 +1,23 @@
+Delete an Individual Custom Field
+DELETE
+https://external-integrations.mycase.com/v1/custom_fields/{id}
+
+Allows you to delete a specfic custom field, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the custom field you want to view or update.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request DELETE \
+  --url https://external-integrations.mycase.com/v1/custom_fields/{id} \
+  --header 'Content-Type: application/json'

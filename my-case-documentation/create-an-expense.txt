@@ -1,0 +1,204 @@
+Create an Expense
+POST
+https://external-integrations.mycase.com/v1/expenses
+
+Create an individual expense.
+
+Request
+Body
+application/json
+application/json
+activity_name
+string
+required
+
+The activity name associated with this expense. If there is no matching activity already in MyCase, one will be created with this name.
+
+description
+string
+billable
+boolean
+required
+
+Whether or not this expense is billable.
+
+entry_date
+string
+required
+
+The entry date of this expense. Must be in ISO 8601 date format.
+
+cost
+number
+required
+units
+number
+required
+case
+object
+required
+id
+integer
+required
+staff
+object
+id
+integer
+Responses
+201
+
+Created
+
+Body
+application/json
+application/json
+responses
+/
+201
+id
+integer
+activity_name
+string
+
+The activity name associated with this expense.
+
+description
+string
+billable
+boolean
+
+Whether or not this expense is billable.
+
+entry_date
+string
+
+The entry date of this expense in ISO 8601 date format.
+
+cost
+string
+units
+string
+case
+object
+id
+integer
+staff
+object
+id
+integer
+invoices
+array[object]
+id
+integer
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+
+The value of this custom field.
+
+created_at
+string
+
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+created_at
+string
+updated_at
+string
+Request Sample: Shell / cURL
+curl --request POST \
+  --url https://external-integrations.mycase.com/v1/expenses \
+  --header 'Accept: application/json' \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "activity_name": "string",
+  "description": "string",
+  "billable": true,
+  "entry_date": "string",
+  "cost": 0,
+  "units": 0,
+  "case": {
+    "id": 0
+  },
+  "staff": {
+    "id": 0
+  }
+}'
+Response Example
+1
+{
+2
+  "id": 0,
+3
+  "activity_name": "string",
+4
+  "description": "string",
+5
+  "billable": true,
+6
+  "entry_date": "string",
+7
+  "cost": "string",
+8
+  "units": "string",
+9
+  "case": {
+10
+    "id": 0
+11
+  },
+12
+  "staff": {
+13
+    "id": 0
+14
+  },
+15
+  "invoices": [
+16
+    {
+17
+      "id": 0
+18
+    }
+19
+  ],
+20
+  "custom_field_values": [
+21
+    {
+22
+      "custom_field": {
+23
+        "id": 0,
+24
+        "field_type": "string"
+25
+      },
+26
+      "value": "string",
+27
+      "created_at": "string",
+28
+      "updated_at": "string"
+29
+    }
+30
+  ],
+31
+  "created_at": "string",
+32
+  "updated_at": "string"
+33
+}

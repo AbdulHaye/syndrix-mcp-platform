@@ -1,0 +1,11 @@
+{
+  "name": "Delete an Individual Location",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/754e480b370c7-delete-an-individual-location",
+  "method": "DELETE",
+  "path": null,
+  "description": "Allows you to delete a specfic location, based on the authorized user/firm priviledges.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Delete an Individual Location\nDELETE\nhttps://external-integrations.mycase.com/v1/locations/{id}\n\nAllows you to delete a specfic location, based on the authorized user/firm priviledges.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the location you want to view or update.\n\nResponses\n204\n\nNo Content\n\nRequest Sample: Shell / cURL\ncurl --request DELETE \\\n  --url https://external-integrations.mycase.com/v1/locations/{id} \\\n  --header 'Content-Type: application/json'"
+}

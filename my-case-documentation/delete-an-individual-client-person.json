@@ -1,0 +1,11 @@
+{
+  "name": "Delete an Individual Client  (Person)",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/2f3f04df68f66-delete-an-individual-client-person",
+  "method": "DELETE",
+  "path": null,
+  "description": "Allows you to delete a specfic client (person), based on the authorized user/firm priviledges.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Delete an Individual Client (Person)\nDELETE\nhttps://external-integrations.mycase.com/v1/clients/{id}\n\nAllows you to delete a specfic client (person), based on the authorized user/firm priviledges.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the client (person) you want to view or update.\n\nResponses\n204\n\nNo Content\n\nRequest Sample: Shell / cURL\ncurl --request DELETE \\\n  --url https://external-integrations.mycase.com/v1/clients/{id} \\\n  --header 'Content-Type: application/json'"
+}

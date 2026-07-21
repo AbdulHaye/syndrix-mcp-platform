@@ -1,0 +1,172 @@
+Update an Individual Client (Person)
+PUT
+https://external-integrations.mycase.com/v1/clients/{id}
+
+Allows you to edit a specfic client (person), based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the client (person) you want to view or update.
+
+Body
+application/json
+application/json
+email
+string
+
+The email of the client being created.
+
+first_name
+string
+required
+
+The first name of the client being created.
+
+middle_initial
+string
+deprecated
+
+[DEPRECATED] This field has been replaced by the middle_name field for consistency. Please use the middle_name field instead. Use of both fields will result in an error.
+
+middle_name
+string
+
+The middle name of the client being created.
+
+last_name
+string
+required
+
+The last name of the client being created.
+
+address
+AddressRequest
+
+If you provide any address object then all address properties need to be included.
+
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+cell_phone_number
+string
+
+The clients cell phone number.
+
+work_phone_number
+string
+
+The clients work phone number.
+
+home_phone_number
+string
+
+The clients home phone number.
+
+fax_phone_number
+string
+
+The clients fax phone number.
+
+birthdate
+string
+
+The clients date of birth in ISO-8601 date format.
+
+notes
+string
+
+Any additional information you want to keep on a particular client. It is seen by other firm members but is not visible to the individual client.
+
+people_group
+object
+
+The people group associated with this client.
+
+id
+integer
+cases
+array[object]
+
+Any cases associated with the client, can be one or multiple.
+
+id
+integer
+
+The individual case ID associated with the client.
+
+custom_field_values
+array[CustomFieldValueRequest]
+
+Specify values for custom fields that have parent_type of client.
+
+custom_field
+object
+required
+
+The custom field that this value is associated with.
+
+value
+string or number or boolean
+required
+
+The value of this custom field.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request PUT \
+  --url https://external-integrations.mycase.com/v1/clients/{id} \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "email": "string",
+  "first_name": "string",
+  "middle_initial": "string",
+  "middle_name": "string",
+  "last_name": "string",
+  "address": {
+    "address1": "string",
+    "address2": "string",
+    "city": "string",
+    "state": "string",
+    "zip_code": "string",
+    "country": "string"
+  },
+  "cell_phone_number": "string",
+  "work_phone_number": "string",
+  "home_phone_number": "string",
+  "fax_phone_number": "string",
+  "birthdate": "string",
+  "notes": "string",
+  "people_group": {
+    "id": 0
+  },
+  "cases": [
+    {
+      "id": 0
+    }
+  ],
+  "custom_field_values": [
+    {
+      "custom_field": {
+        "id": 0
+      },
+      "value": "string"
+    }
+  ]
+}'

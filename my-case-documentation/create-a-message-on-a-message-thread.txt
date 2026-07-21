@@ -1,0 +1,116 @@
+Create a Message on a Message Thread
+POST
+https://external-integrations.mycase.com/v1/message_threads/{id}/messages
+
+Create an individual message on a message thread.
+
+Request
+Path Parameters
+id
+string
+required
+
+The ID of the message thread to create a message for.
+
+Body
+application/json
+application/json
+sender
+object
+required
+
+The Staff member or Contact who sent the message.
+
+id
+integer
+body
+string
+required
+
+The body text of the message.
+
+Responses
+201
+
+Created
+
+Body
+application/json
+application/json
+responses
+/
+201
+id
+number
+
+A unique identifier for the message.
+
+sender
+object
+
+The Staff member or Contact who sent the message.
+
+id
+integer
+body
+string
+
+The body text of the message.
+
+message_thread
+object
+
+The message thread that this message is associated with.
+
+id
+integer
+subject
+string
+created_at
+string
+
+The date the message thread was created in ISO 8601 date/time format.
+
+updated_at
+string
+
+The date the message thread was updated in ISO 8601 date/time format.
+
+Request Sample: Shell / cURL
+curl --request POST \
+  --url https://external-integrations.mycase.com/v1/message_threads/{id}/messages \
+  --header 'Accept: application/json' \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "sender": {
+    "id": 0
+  },
+  "body": "string"
+}'
+Response Example
+1
+{
+2
+  "id": 0,
+3
+  "sender": {
+4
+    "id": 0
+5
+  },
+6
+  "body": "string",
+7
+  "message_thread": {
+8
+    "id": 0,
+9
+    "subject": "string"
+10
+  },
+11
+  "created_at": "string",
+12
+  "updated_at": "string"
+13
+}

@@ -1,0 +1,151 @@
+Get All Message Threads for a Client
+GET
+https://external-integrations.mycase.com/v1/clients/{id}/message_threads
+
+Get all message threads associated with a specific client.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the client you want to get message threads for.
+
+Responses
+200
+
+OK
+
+Headers
+Item-Count
+number
+
+The total number of results.
+
+Link
+string
+
+If there is another page of results, we provides you with the cursor to the next page using page_token. Please reference our pagination documentation for more info.
+
+Body
+application/json
+application/json
+responses
+/
+200
+array of:
+id
+number
+
+A unique identifier for the message thread.
+
+subject
+string
+
+The subject of the message thread.
+
+first_message_body
+string
+
+The body text of the first message in the thread.
+
+sender
+object
+
+The sender of the first message in this message thread.
+
+id
+integer
+case
+object or null
+
+The case associated with this message thread, if there is one.
+
+id
+number
+clients
+array[object]
+
+Any clients associated with this message thread.
+
+id
+integer
+
+The ID of the client.
+
+staff
+array[object]
+
+Any staff associated with this message thread.
+
+id
+integer
+
+The ID of the staff.
+
+created_at
+string
+
+The date the message thread was created in ISO 8601 date/time format.
+
+updated_at
+string
+
+The date the message thread was updated in ISO 8601 date/time format.
+
+Request Sample: Shell / cURL
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/clients/{id}/message_threads \
+  --header 'Accept: application/json'
+Response Example
+1
+[
+2
+  {
+3
+    "id": 0,
+4
+    "subject": "string",
+5
+    "first_message_body": "string",
+6
+    "sender": {
+7
+      "id": 0
+8
+    },
+9
+    "case": {
+10
+      "id": 0
+11
+    },
+12
+    "clients": [
+13
+      {
+14
+        "id": 0
+15
+      }
+16
+    ],
+17
+    "staff": [
+18
+      {
+19
+        "id": 0
+20
+      }
+21
+    ],
+22
+    "created_at": "string",
+23
+    "updated_at": "string"
+24
+  }
+25
+]

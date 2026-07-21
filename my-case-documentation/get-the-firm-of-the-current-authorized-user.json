@@ -1,0 +1,11 @@
+{
+  "name": "Get the Firm of the Current Authorized User",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/0acc0620bdd9e-get-the-firm-of-the-current-authorized-user",
+  "method": "GET",
+  "path": null,
+  "description": "Allows you to view the firm of the current authorized user.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Get the Firm of the Current Authorized User\nGET\nhttps://external-integrations.mycase.com/v1/firm\n\nAllows you to view the firm of the current authorized user.\n\nResponses\n200\n\nOK\n\nBody\napplication/json\napplication/json\nname\nstring\n\nThe name of the firm.\n\nurl\nstring\n\nThe firms MyCase url. This can be used as a unique identifier for the firm.\n\nRequest Sample: Shell / cURL\ncurl --request GET \\\n  --url https://external-integrations.mycase.com/v1/firm \\\n  --header 'Accept: application/json'\nResponse Example\n1\n{\n2\n  \"name\": \"string\",\n3\n  \"url\": \"string\"\n4\n}"
+}

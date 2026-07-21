@@ -1,0 +1,23 @@
+Delete an Individual Client (Person)
+DELETE
+https://external-integrations.mycase.com/v1/clients/{id}
+
+Allows you to delete a specfic client (person), based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the client (person) you want to view or update.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request DELETE \
+  --url https://external-integrations.mycase.com/v1/clients/{id} \
+  --header 'Content-Type: application/json'

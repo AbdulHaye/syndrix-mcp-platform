@@ -38,13 +38,16 @@ _OLLAMA_TOOL_PRIORITY: dict[str, set[str]] = {
     "folder structure": {"get_case_folder_tree"}, "subfolder": {"get_folder_subfolders", "get_case_folder_tree"},
     "event": {"get_events"}, "calendar": {"get_events"}, "meeting": {"get_events"},
     "expense": {"get_expenses", "get_expense"},
-    "invoice": {"get_invoices", "get_invoices_by_date", "get_case_invoices", "get_invoice_payments"}, "payment": {"get_invoice_payments"},
+    "invoice": {"get_invoices", "get_invoices_by_date", "get_case_invoices", "get_invoice_payments", "aggregate_invoices"}, "payment": {"get_invoice_payments"},
     "created on": {"get_invoices_by_date"}, "due on": {"get_invoices_by_date"}, "invoiced": {"get_invoices_by_date"},
     "invoices for": {"get_case_invoices"}, "invoices related to": {"get_case_invoices"},
+    "unpaid": {"aggregate_invoices"}, "not paid": {"aggregate_invoices"}, "outstanding": {"aggregate_invoices"},
+    "overdue": {"aggregate_invoices"}, "owed": {"aggregate_invoices"}, "owing": {"aggregate_invoices"},
+    "top": {"aggregate_invoices", "aggregate_cases"},
     "billing": {"get_invoices", "get_invoice_payments", "get_expenses", "get_time_entries"},
     "time entry": {"get_time_entries", "get_time_entry", "lookup_utbms_code"}, "hours": {"get_time_entries"},
     "utbms": {"lookup_utbms_code"}, "ledes": {"lookup_utbms_code"},
-    "report": {"aggregate_cases", "get_custom_fields", "get_case_stages", "get_practice_areas"},
+    "report": {"aggregate_cases", "aggregate_invoices", "get_custom_fields", "get_case_stages", "get_practice_areas"},
     "count": {"aggregate_cases", "get_custom_fields", "get_case_stages"},
     "group by": {"aggregate_cases"}, "grouped by": {"aggregate_cases"}, "per agent": {"aggregate_cases"},
     "breakdown": {"aggregate_cases"}, "how many": {"aggregate_cases"},
@@ -68,6 +71,14 @@ def _filter_tools_for_ollama(tool_specs: list[dict[str, Any]], message: str) -> 
     for kw, names in _OLLAMA_TOOL_PRIORITY.items():
         if kw in msg_lower:
             priority.update(names)
+    # A request combining "cases" + "invoices" ("show 5 X cases and their invoices")
+    # needs aggregate_cases(include_invoices=True) — it's easy for a message to match
+    # both the "case" and "invoice" keyword groups above without ever matching a
+    # report/count/group-by keyword, which would otherwise leave aggregate_cases
+    # capped out of a local model's tool list entirely, forcing it toward
+    # search_cases + a single get_case_invoices call (the exact reported bug shape).
+    if priority & {"get_cases", "get_case", "search_cases"} and priority & {"get_invoices", "get_case_invoices"}:
+        priority.add("aggregate_cases")
     prioritised = [t for t in tool_specs if t["function"]["name"] in priority]
     rest = [t for t in tool_specs if t["function"]["name"] not in priority]
     return (prioritised + rest)[:_OLLAMA_MAX_TOOLS]
@@ -290,6 +301,28 @@ def _wants_record_listing(message: str) -> bool:
     return any(w in m for w in _LISTING_INTENT_WORDS)
 
 
+_CASE_COUNT_RE = re.compile(
+    r"\b(\d{1,4})\s+(?:[a-zA-Z][a-zA-Z\-]*\s+){0,3}cases?\b"
+    r"(?!\s*(?:manager|number|type|load|worker|study|stage))",
+    re.IGNORECASE,
+)
+
+
+def _requested_case_count(message: str) -> int | None:
+    """Extracts N from a request like 'show me 5 immigration cases' — used to
+    deterministically enforce aggregate_cases' `limit` param (see the pre-call gate
+    in run_mycase_agent below) rather than trusting the model to remember to pass
+    it. A real incident: asked for '5 immigration cases and their invoices', the
+    model called aggregate_cases with NEITHER practice_area NOR limit set, which
+    silently returned up to 5000 unfiltered cases while still claiming in its reply
+    'there are 5 immigration cases matching your request' — a claim nothing here
+    verifies against the actual number requested (see _unverified_resource_claims'
+    own limits: it only checks that a "cases"-shaped tool was called THIS turn at
+    all, not that the number claimed matches what the call actually returned)."""
+    m = _CASE_COUNT_RE.search(message or "")
+    return int(m.group(1)) if m else None
+
+
 def _wants_count_only(message: str) -> bool:
     """A pure count question ('how many clients do we have') is correctly answered
     from item_count off a single, cheap call — it never needs the actual rows, so
@@ -332,6 +365,34 @@ def _unverified_resource_claims(
         if resource not in items_by_resource and resource not in resource_totals:
             claimed.add(resource)
     return sorted(claimed)
+
+
+_NO_INVOICE_CLAIM_RE = re.compile(
+    r"\bno invoices?\b[^.]{0,60}\b(returned|found|associated|exist|were\b)", re.IGNORECASE,
+)
+
+
+def _reply_falsely_denies_invoices(text: str, items_by_resource: dict[str, dict[Any, dict]]) -> bool:
+    """A real incident: aggregate_cases(include_invoices=True) correctly found 1
+    invoice for 1 of 5 cases (visible right there in the same turn's own result
+    table) — but the model's closing summary still said "no invoices were
+    returned for these cases" and told the user to go search MyCase manually.
+    That's not a data gap _unverified_resource_claims can catch (a "cases" fetch
+    genuinely happened, with real invoice data attached to the rows) — it's the
+    reply flatly contradicting its OWN successful result. Scans this turn's
+    fetched "cases" rows (aggregate_cases/search_cases/etc. — see
+    _RESOURCE_KEY_ALIASES) for any row carrying a real invoice, and flags a
+    blanket "no invoices" denial in the text as false when one exists."""
+    if not _NO_INVOICE_CLAIM_RE.search(text or ""):
+        return False
+    for row in items_by_resource.get("cases", {}).values():
+        if not isinstance(row, dict):
+            continue
+        if isinstance(row.get("invoice_count"), int) and row["invoice_count"] > 0:
+            return True
+        if isinstance(row.get("invoices"), list) and row["invoices"]:
+            return True
+    return False
 
 
 def _row_id(item: dict[str, Any]) -> Any:
@@ -392,7 +453,17 @@ def _augment_reply_with_missing_data(
 # as inert plain text instead of a working link), so it's stripped deterministically
 # below rather than trusted to prompting alone.
 _DOWNLOAD_TOOLS = {"download_document", "download_document_version"}
-_RESOURCE_KEY_ALIASES = {"invoices_by_date": "invoices", "case_invoices": "invoices"}
+_RESOURCE_KEY_ALIASES = {
+    "invoices_by_date": "invoices", "case_invoices": "invoices",
+    # These three tool names don't start with "get_", so the raw `resource`
+    # computed from the tool name (name[4:] if it starts with "get_" else name)
+    # would otherwise be "aggregate_cases"/"search_cases"/"find_cases_with_documents"
+    # literally — never recognized as "cases" data by _unverified_resource_claims,
+    # so a claim like "there are 5 immigration cases" sourced from aggregate_cases
+    # was never checked against what it actually returned.
+    "aggregate_cases": "cases", "search_cases": "cases", "find_cases_with_documents": "cases",
+    "aggregate_invoices": "invoices",
+}
 _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
 
 
@@ -462,8 +533,12 @@ KEY RESOURCES
 - DOWNLOAD LINKS: after a successful download_document/download_document_version call, the UI automatically renders a real "Download" BUTTON below your reply — do NOT paste the raw download_url into your reply text as a markdown link (it's long, easy to mis-render as plain text the user has to copy/paste, and would just duplicate the button). Instead give a short acknowledgment and state the tool result's OWN `expires_in` value (never invent a duration — download_document is valid only ~1 minute, download_document_version ~1 hour), e.g. "Here's the download — the link expires in 1 minute, so click the button below right away." If the user reports the download failed with an XML/S3 error (anything mentioning "anonymous GET requests" or an `<Error>...</Error>` block), that means the link EXPIRED — it is not a bug or a broken document; just call download_document/download_document_version again for a fresh one (a new button will render).
 - "Get the folder structure for case X" / "show me the folders/subfolders for case X": this IS a folder-structure request (unlike the document-list case above) — call get_case_folder_tree(case_id) once; it recursively returns the whole tree (every folder + its documents) in one call. Only use get_folder_subfolders(folder_id)/get_folder_documents(folder_id) individually when the user gives you a SPECIFIC known folder id and wants just that one level (e.g. "what's in folder 55").
 - "Find N cases that HAVE documents": there is no server-side filter for this — use aggregate_cases-style deterministic tooling, NOT a manual sample. Call find_cases_with_documents(limit=N) — it scans every document firm-wide, tallies which cases they belong to, and returns the N cases with the most documents (each case row includes document_count). Do NOT just grab the first few cases from get_cases and hope some of them happen to have documents — that produces wrong/incomplete answers for exactly the reason aggregate_cases/search_cases exist: an LLM sampling a handful of records cannot reliably answer a question that requires checking across the whole dataset.
-- Billing: get_invoices (NOTE: only invoices with online payments enabled are returned by default — pass only_allowed_online_payments=false to see all), get_invoice_payments, get_expenses, get_time_entries. Time entries may carry utbms_activity_code / utbms_task_code (LEDES billing codes) — use lookup_utbms_code(code) to explain what one means rather than guessing; an activity code always has an accompanying task code, but a task code can stand alone.
+- Billing: get_invoices (NOTE: only invoices with online payments enabled are returned by default — pass only_allowed_online_payments=false to see all), get_invoice_payments, get_expenses, get_time_entries. Time entries may carry utbms_activity_code / utbms_task_code (LEDES billing codes) — use lookup_utbms_code(code) to explain what one means rather than guessing; an activity code always has an accompanying task code, but a task code can stand alone. get_case_invoices, get_invoices_by_date, and aggregate_cases(include_invoices=True) do NOT have this gotcha — they already default to ALL invoices regardless of online-payment status, unlike raw get_invoices.
+- "N INVOICES THAT ARE UNPAID/OVERDUE/PAID" / "TOP N INVOICES BY AMOUNT OWED" / "invoices over $X" (any firm-wide invoice request involving a status, paid/unpaid state, amount-owed threshold, sort, or count limit): call aggregate_invoices — NEVER call get_invoices and try to filter/sort/limit its raw output yourself. get_invoices has NO server-side filter for status or balance at all (only updated_after), so a plain get_invoices(page_size=N) call returns the first N invoices UNFILTERED, in whatever order MyCase happens to store them — a real incident showed this literally including several already-PAID invoices in a reply that was supposed to be "unpaid invoices only". For "unpaid" specifically, pass paid=False (covers overdue/partial/draft/unsent/sent — the real meaning of "hasn't been paid"), not a guessed status string. Pass limit=N for "top N". Default sort (balance_due, descending) already puts the largest amounts owed first, which is what "top unpaid invoices" almost always means — only change sort_by if the user asks for oldest/most-overdue-by-date instead.
+- aggregate_cases(include_invoices=True): if the invoice portion of the report fails or times out, you still get back the full, correct case rows — each will carry an `invoices_error` field instead of `invoices`/`invoice_count`. Check for it: if present, report the case data normally but tell the user the invoice lookup itself failed (quote the reason) rather than silently treating every case as having zero invoices, or re-fetching invoices yourself one case at a time (that reintroduces the exact slow per-case loop this tool exists to avoid).
 - INVOICES "CREATED/DUE/DATED on|before|after X": get_invoices has NO server-side filter for an exact date — its only date param (updated_after) is a floor on created-OR-updated time, NOT the same as "created on X", and has no relation to invoice_date/due_date at all. Using get_invoices alone for a date-specific question WILL return the wrong set (invoices merely touched/updated on that date, not created on it) — call get_invoices_by_date(date_field="created_at"|"updated_at"|"invoice_date"|"due_date", on=/after=/before=) instead; it returns only the matching invoices, already filtered. Never try to eyeball-filter get_invoices' raw output yourself by comparing dates in your head — a past incident showed this failing invisibly: the reply correctly said "4 matched" but the chat's own result table (built directly from the tool result, not your text) still showed all 20 unfiltered rows, since the underlying get_invoices call itself never actually filtered by date.
+- "SHOW ME N <type> CASES" (a plain listing capped to a specific count, e.g. "show me 5 immigration cases", "list 10 open cases") — this is NOT a search for one already-known case, so do NOT use search_cases (it has no practice-area or limit concept and will either return the wrong set or far fewer than N). Call aggregate_cases(practice_area=..., limit=N) — see REPORTS below; `limit` is exactly for this.
+- "N CASES ... AND THEIR INVOICES" / "... WITH BILLING INFO" (any request combining a case listing with each case's invoices): call aggregate_cases(..., limit=N if a count was given, include_invoices=True) in ONE call — do NOT call get_case_invoices separately per case. Looping get_case_invoices once per case re-walks MyCase's ENTIRE invoice list from scratch on every single call (slow), and it's easy to stop after the first case or skip the step entirely across several tool-call turns — exactly why this has previously come back with all the cases but only one case's invoices, or none at all. include_invoices=True attaches invoice_count, outstanding_invoice_total, and each invoice (id, invoice_number, status, invoice_date, due_date, total_amount, paid_amount, balance_due) directly onto every returned case's own row, in one pass — and it already fetches ALL invoices, not just online-payable ones. If this call itself errors, retry it ONCE as-is before doing anything else; if it still errors, report that plainly (with the real error) rather than silently falling back to a get_case_invoices loop — that fallback is exactly the slow, incomplete pattern this tool exists to replace, and a real explained failure is more useful than a quietly incomplete workaround.
 - INVOICES "FOR A CASE" ("invoices for case X", "invoices related to the Asylum case for Moise Pierre"): call get_case_invoices(case_id=... or case_query=...) — it resolves the case AND filters invoices in one call (get_invoices has no server-side case filter). CRITICAL — if it returns matched_case=null and an empty items[] (case_query matched no case), that means the case genuinely was not found: say so plainly (e.g. "No case found matching X") and suggest an alternative (search by the client's name, or ask the user for the exact case id/case number) exactly as instructed in its `note`. Do NOT then call get_invoices or get_cases yourself to keep looking "just in case" — a past incident did exactly that, burning a pointless full-firm scan of 1,000 invoices that could never have matched (there was no case to filter by) and confusing the user with an irrelevant "found 1,000 invoices in the system" aside. A failed lookup ends with a clear "not found" + your recommendation, never a fallback scan of an unrelated dataset. If it returns `candidates` (multiple cases matched), list them and ask the user to pick one before fetching anything else.
 - Calendar: get_events. Tasks: get_tasks. Notes: get_case_notes / get_client_notes / get_note (by id).
 - Reference/config data (rarely change): get_case_stages, get_case_roles, get_practice_areas, get_locations, get_referral_sources, get_people_groups, get_custom_fields (+ get_custom_field_list_options for list-type fields). IMPORTANT: these return the firm's DEFINED list of possible values (e.g. get_case_stages returns every stage NAME the firm has configured, however many that is) — this is config data, not case data. Its row count has NOTHING to do with how many cases are actually in any given stage; never present it, or its count, as if it were a filtered case result. These NEVER get an automatic table in the chat UI (unlike cases/clients/invoices/etc.) — when the user asks "what stages/roles/practice areas/locations/custom fields exist", you must list every actual value in your reply text, not just a count (see THIS DOES NOT APPLY TO REFERENCE/CONFIG DATA above).
@@ -476,7 +551,8 @@ CUSTOM FIELDS (e.g. "Case Type", "Processing Agent", any firm-defined field on a
 - Filtering cases by a custom field's value (e.g. "Case Type = Asylum") is NOT a filter[...] query parameter — get_cases has no such filter. For a SINGLE case or a small known set, you may filter in your own reasoning. For anything involving counting/grouping/reporting across many cases, use aggregate_cases instead (see below) — do NOT try to hand-count from get_cases results.
 
 REPORTS: FILTERING, EXCLUDING, AND COUNTING CASES
-- Any request shaped like "count/group/breakdown of cases by X", "how many active Y cases", "case count per agent", etc. → call aggregate_cases. NEVER try to compute a count or group-by yourself by calling get_cases and reading through however many pages come back — beyond a handful of cases this is unreliable (large result sets don't fully fit in what you're shown) and produces wrong numbers even when it looks like it worked. aggregate_cases does the fetching, filtering, exclusion, and counting in code, accurate no matter how many cases match, and hands you back a small ready-to-present result.
+- Any request shaped like "count/group/breakdown of cases by X", "how many active Y cases", "case count per agent", "show me N <type> cases" (with a specific number), or "N cases ... and their invoices" → call aggregate_cases. NEVER try to compute a count or group-by yourself by calling get_cases and reading through however many pages come back — beyond a handful of cases this is unreliable (large result sets don't fully fit in what you're shown) and produces wrong numbers even when it looks like it worked. aggregate_cases does the fetching, filtering, exclusion, and counting in code, accurate no matter how many cases match, and hands you back a small ready-to-present result.
+- If the user asked for a SPECIFIC NUMBER of cases (not just "how many", but "show me/give me N cases"), pass that number as `limit` — do not fetch everything and try to only describe/mention the first N yourself; the returned table is built directly from items[], so an unlimited call still shows every matching case regardless of what your reply text says. If the user ALSO wants each case's invoices ("...and their invoices", "...with billing"), also pass include_invoices=True in that SAME call — see the "N CASES ... AND THEIR INVOICES" rule under KEY RESOURCES; do not fetch invoices with a separate get_case_invoices call per case.
 - Before calling aggregate_cases, resolve every field reference the user gave you loosely, in plain language, into the EXACT values MyCase uses:
   1. A stage description like "Closed" or "Immigration Documents Submitted/Mailed/Uploaded" → call get_case_stages() and find the real stage strings (e.g. "CLOSED", "IMMIGRATION- SUBMITTED (MAIL/UPLOAD PACKAGE)"). Whether that resolved name goes into case_stages or exclude_case_stages depends on what the user asked: "where stage is X" / "in the X stage" → case_stages=["X"] (KEEPS only that stage); "excluding X" / "not in X" / "everything except X" → exclude_case_stages=["X"] (DROPS that stage). Do not guess or paraphrase these — pass the exact strings from get_case_stages(), and never substitute group_by for an actual stage filter (group_by only labels/counts, it does not remove non-matching rows).
   2. A custom field name like "Case Type" or "Processing Agent" → call get_custom_fields() to confirm the exact field name (e.g. "CASE TYPE", "PROCESSING AGENT") to use as a custom_field_filters key or group_by value.
@@ -542,6 +618,7 @@ async def run_mycase_agent(message: str, history: list[dict[str, str]] | None = 
     resource_totals: dict[str, int] = {}
     download_urls: list[str] = []
     count_only = _wants_count_only(message)
+    requested_case_count = _requested_case_count(message)
 
     for _ in range(_MAX_STEPS):
         assistant_msg = await model_gateway.chat(messages, tools=tool_specs, model=model, num_predict=_NUM_PREDICT)
@@ -568,10 +645,12 @@ async def run_mycase_agent(message: str, history: list[dict[str, str]] | None = 
 
         if not tool_calls:
             unverified = _unverified_resource_claims(candidate, items_by_resource, resource_totals)
+            denies_invoices = _reply_falsely_denies_invoices(candidate, items_by_resource)
             bad_reason = (
                 "garbage" if _is_garbage_reply(candidate) else
                 "text_tool_call" if _has_text_tool_call(candidate) else
                 "non_ascii" if _has_non_ascii_garbage(candidate) else
+                "false_invoice_denial" if denies_invoices else
                 "unverified_claim" if unverified else
                 None
             )
@@ -586,6 +665,20 @@ async def run_mycase_agent(message: str, history: list[dict[str, str]] | None = 
                             "function-calling channel, so it did NOT run. Do NOT print JSON or "
                             "a '{...}' object in your reply — invoke the tool using the "
                             "structured function-calling format right now."
+                        ),
+                    })
+                    continue
+                if bad_reason == "false_invoice_denial":
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "Your reply claims no invoices were found, but the case data you "
+                            "ACTUALLY fetched this turn includes at least one case with a real "
+                            "invoice attached (invoice_count > 0). Look again at the aggregate_cases/"
+                            "get_case_invoices result you already have — do not restate a blanket "
+                            "'no invoices' denial when your own data shows otherwise. Report exactly "
+                            "which case(s) DO and DON'T have invoices, based on the real per-row "
+                            "invoice_count/invoices data, not a generic statement."
                         ),
                     })
                     continue
@@ -616,7 +709,36 @@ async def run_mycase_agent(message: str, history: list[dict[str, str]] | None = 
             args = _sanitize_tool_args(_coerce_args(fn.get("arguments")), props)
 
             logger.info("mycase_agent_tool_call", tool=name, args=args)
-            if name not in valid_names:
+            call_limit = args.get("limit") if isinstance(args, dict) else None
+            if (
+                name == "aggregate_cases" and requested_case_count is not None
+                and (call_limit is None or str(call_limit) != str(requested_case_count))
+            ):
+                # Deterministic pre-call gate — a real incident showed the model
+                # calling aggregate_cases with NEITHER practice_area NOR limit set
+                # for "show me 5 immigration cases", which silently fetched up to
+                # 5000 unfiltered cases while still claiming "there are 5 immigration
+                # cases matching your request" in its reply. Prompt guidance alone
+                # was not reliable enough — reject the call before it ever reaches
+                # MyCase (saving a slow, wasted 5000-row fetch too) rather than
+                # letting an unlimited dump reach the user.
+                logger.warning(
+                    "mycase_agent_aggregate_cases_limit_rejected",
+                    requested=requested_case_count, got=call_limit,
+                )
+                result = {
+                    "success": False,
+                    "error": (
+                        f"Rejected before calling MyCase: the user asked for exactly "
+                        f"{requested_case_count} cases, so this call MUST include "
+                        f"limit={requested_case_count} (you passed limit={call_limit!r}). "
+                        f"Retry aggregate_cases with limit={requested_case_count} — keep any "
+                        "other filters (e.g. practice_area) you already had. Without the "
+                        "correct limit, aggregate_cases returns EVERY matching case firm-wide, "
+                        "which is why this call was rejected instead of run."
+                    ),
+                }
+            elif name not in valid_names:
                 result: dict[str, Any] = {"success": False, "error": f"Unknown tool '{name}'"}
             else:
                 try:
@@ -700,9 +822,12 @@ async def run_mycase_agent(message: str, history: list[dict[str, str]] | None = 
         closing = await model_gateway.chat(messages, model=model, num_predict=_NUM_PREDICT_FINAL)
         candidate = (closing or {}).get("content", "") or ""
         still_unverified = _unverified_resource_claims(candidate, items_by_resource, resource_totals)
+        still_denies_invoices = _reply_falsely_denies_invoices(candidate, items_by_resource)
         if still_unverified:
             logger.warning("mycase_agent_closing_reply_unverified", unverified=still_unverified)
-        if not _is_garbage_reply(candidate) and not still_unverified:
+        if still_denies_invoices:
+            logger.warning("mycase_agent_closing_reply_false_invoice_denial")
+        if not _is_garbage_reply(candidate) and not still_unverified and not still_denies_invoices:
             final_text = _augment_reply_with_missing_data(candidate, items_by_resource, resource_totals, count_only)
         else:
             ok_tools = [s["tool"] for s in steps if (s.get("result") or {}).get("success") is not False]

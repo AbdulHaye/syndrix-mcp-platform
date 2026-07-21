@@ -1,0 +1,23 @@
+Delete an Individual Location
+DELETE
+https://external-integrations.mycase.com/v1/locations/{id}
+
+Allows you to delete a specfic location, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the location you want to view or update.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request DELETE \
+  --url https://external-integrations.mycase.com/v1/locations/{id} \
+  --header 'Content-Type: application/json'

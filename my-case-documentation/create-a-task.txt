@@ -1,0 +1,167 @@
+Create a Task
+POST
+https://external-integrations.mycase.com/v1/tasks
+
+Create an individual task.
+
+Request
+Body
+application/json
+application/json
+name
+string
+required
+
+The name of this task.
+
+description
+string
+priority
+string
+required
+
+The priority of this task. One of (Low | Medium | High)
+
+due_date
+string
+required
+
+The due date of this task. Must be in ISO 8601 date format.
+
+completed
+boolean
+
+Whether or not this task is completed.
+
+case
+object
+
+The case associated with this task, if there is one.
+
+id
+integer
+staff
+array[object]
+required
+
+All staff associated with this task.
+
+id
+integer
+Responses
+201
+
+Created
+
+Body
+application/json
+application/json
+responses
+/
+201
+id
+integer
+name
+string
+
+The name of this task.
+
+description
+string
+priority
+string
+
+The priority of this task. One of (Low | Medium | High)
+
+due_date
+string
+
+The due date of this task in ISO 8601 date format.
+
+completed
+boolean
+
+Whether or not this task is completed.
+
+case
+object
+
+The case associated with this task, if there is one.
+
+id
+integer
+staff
+array[object]
+
+All staff associated with this task.
+
+id
+integer
+created_at
+string
+updated_at
+string
+completed_at
+string
+
+Null if the task has not been completed.
+
+Request Sample: Shell / cURL
+curl --request POST \
+  --url https://external-integrations.mycase.com/v1/tasks \
+  --header 'Accept: application/json' \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "name": "string",
+  "description": "string",
+  "priority": "string",
+  "due_date": "string",
+  "completed": true,
+  "case": {
+    "id": 0
+  },
+  "staff": [
+    {
+      "id": 0
+    }
+  ]
+}'
+Response Example
+1
+{
+2
+  "id": 0,
+3
+  "name": "string",
+4
+  "description": "string",
+5
+  "priority": "string",
+6
+  "due_date": "string",
+7
+  "completed": true,
+8
+  "case": {
+9
+    "id": 0
+10
+  },
+11
+  "staff": [
+12
+    {
+13
+      "id": 0
+14
+    }
+15
+  ],
+16
+  "created_at": "string",
+17
+  "updated_at": "string",
+18
+  "completed_at": "string"
+19
+}

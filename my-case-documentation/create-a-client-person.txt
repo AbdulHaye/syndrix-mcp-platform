@@ -1,0 +1,398 @@
+Create a Client (Person)
+POST
+https://external-integrations.mycase.com/v1/clients
+
+Create an individual client (person).
+
+Request
+Body
+application/json
+application/json
+email
+string
+
+The email of the client being created.
+
+first_name
+string
+required
+
+The first name of the client being created.
+
+middle_initial
+string
+deprecated
+
+[DEPRECATED] This field has been replaced by the middle_name field for consistency. Please use the middle_name field instead. Use of both fields will result in an error.
+
+middle_name
+string
+
+The middle name of the client being created.
+
+last_name
+string
+required
+
+The last name of the client being created.
+
+address
+AddressRequest
+
+If you provide any address object then all address properties need to be included.
+
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+cell_phone_number
+string
+
+The clients cell phone number.
+
+work_phone_number
+string
+
+The clients work phone number.
+
+home_phone_number
+string
+
+The clients home phone number.
+
+fax_phone_number
+string
+
+The clients fax phone number.
+
+birthdate
+string
+
+The clients date of birth in ISO-8601 date format.
+
+notes
+string
+
+Any additional information you want to keep on a particular client. It is seen by other firm members but is not visible to the individual client.
+
+people_group
+object
+
+The people group associated with this client.
+
+id
+integer
+cases
+array[object]
+
+Any cases associated with the client, can be one or multiple.
+
+id
+integer
+
+The individual case ID associated with the client.
+
+custom_field_values
+array[CustomFieldValueRequest]
+
+Specify values for custom fields that have parent_type of client.
+
+custom_field
+object
+required
+
+The custom field that this value is associated with.
+
+value
+string or number or boolean
+required
+
+The value of this custom field.
+
+Responses
+201
+
+Created
+
+Body
+application/json
+application/json
+responses
+/
+201
+id
+integer
+
+The unique ID of the client.
+
+email
+string
+
+The email of the client.
+
+first_name
+string
+
+The first name of the client.
+
+middle_initial
+string
+deprecated
+
+[DEPRECATED] This field has been replaced by the middle_name field for consistency. Please use the middle_name field instead. Use of both fields will result in an error.
+
+middle_name
+string
+
+The middle name of the client.
+
+last_name
+string
+
+The last name of the client.
+
+address
+AddressNestedResponse
+address1
+string
+address2
+string
+city
+string
+state
+string
+zip_code
+string
+country
+string
+cell_phone_number
+string
+
+The clients cell phone number.
+
+work_phone_number
+string
+
+The clients work phone number.
+
+home_phone_number
+string
+
+The clients home phone number.
+
+fax_phone_number
+string
+
+The clients fax phone number.
+
+contact_group
+string
+deprecated
+
+The client's contact group. This has been deprecated. Please use the people_group field instead.
+
+people_group
+object
+
+The people group associated with this client.
+
+id
+integer
+notes
+string
+
+Any additional information associated to a particular client. It is seen by other firm members but is not visible to the individual client.
+
+birthdate
+string
+
+The clients date of birth in ISO-8601 date format.
+
+archived
+boolean
+
+A True or False to let you know if the client has been archived and is no longer available for use.
+
+cases
+array[CaseNestedResponse]
+
+Any cases associated with the client, can be one or multiple.
+
+id
+integer
+
+The ID of the case.
+
+custom_field_values
+array[CustomFieldValueResponse]
+custom_field
+object
+
+The custom field that this value is associated with. By default, this object will only be returned with an id field. To specify more fields to be returned, please see the field query parameters.
+
+value
+string or number or boolean
+
+The value of this custom field.
+
+created_at
+string
+
+An ISO 8601 timestamp of when the Custom Field value was created.
+
+updated_at
+string
+
+An ISO 8601 timestamp of when the Custom Field value was last updated.
+
+updated_at
+string
+
+When the client was last updated.
+
+created_at
+string
+
+When the client was created.
+
+Request Sample: Shell / cURL
+curl --request POST \
+  --url https://external-integrations.mycase.com/v1/clients \
+  --header 'Accept: application/json' \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "email": "string",
+  "first_name": "string",
+  "middle_initial": "string",
+  "middle_name": "string",
+  "last_name": "string",
+  "address": {
+    "address1": "string",
+    "address2": "string",
+    "city": "string",
+    "state": "string",
+    "zip_code": "string",
+    "country": "string"
+  },
+  "cell_phone_number": "string",
+  "work_phone_number": "string",
+  "home_phone_number": "string",
+  "fax_phone_number": "string",
+  "birthdate": "string",
+  "notes": "string",
+  "people_group": {
+    "id": 0
+  },
+  "cases": [
+    {
+      "id": 0
+    }
+  ],
+  "custom_field_values": [
+    {
+      "custom_field": {
+        "id": 0
+      },
+      "value": "string"
+    }
+  ]
+}'
+Response Example
+1
+{
+2
+  "id": 0,
+3
+  "email": "string",
+4
+  "first_name": "string",
+5
+  "middle_initial": "string",
+6
+  "middle_name": "string",
+7
+  "last_name": "string",
+8
+  "address": {
+9
+    "address1": "string",
+10
+    "address2": "string",
+11
+    "city": "string",
+12
+    "state": "string",
+13
+    "zip_code": "string",
+14
+    "country": "string"
+15
+  },
+16
+  "cell_phone_number": "string",
+17
+  "work_phone_number": "string",
+18
+  "home_phone_number": "string",
+19
+  "fax_phone_number": "string",
+20
+  "contact_group": "string",
+21
+  "people_group": {
+22
+    "id": 0
+23
+  },
+24
+  "notes": "string",
+25
+  "birthdate": "string",
+26
+  "archived": true,
+27
+  "cases": [
+28
+    {
+29
+      "id": 0
+30
+    }
+31
+  ],
+32
+  "custom_field_values": [
+33
+    {
+34
+      "custom_field": {
+35
+        "id": 0,
+36
+        "field_type": "string"
+37
+      },
+38
+      "value": "string",
+39
+      "created_at": "string",
+40
+      "updated_at": "string"
+41
+    }
+42
+  ],
+43
+  "updated_at": "string",
+44
+  "created_at": "string"
+45
+}

@@ -1,0 +1,11 @@
+{
+  "name": "Delete an Individual Call",
+  "url": "https://mycaseapi.stoplight.io/docs/mycase-api-documentation/2f426ef00a8e4-delete-an-individual-call",
+  "method": "DELETE",
+  "path": null,
+  "description": "Allows you to delete a specfic call, based on the authorized user/firm priviledges.",
+  "parameters": [],
+  "request_body": null,
+  "responses": [],
+  "raw_text": "Delete an Individual Call\nDELETE\nhttps://external-integrations.mycase.com/v1/calls/{id}\n\nAllows you to delete a specfic call, based on the authorized user/firm priviledges.\n\nRequest\nPath Parameters\nid\nstring\nrequired\n\nThe id of the call you want to view or update.\n\nResponses\n204\n\nNo Content\n\nRequest Sample: Shell / cURL\ncurl --request DELETE \\\n  --url https://external-integrations.mycase.com/v1/calls/{id} \\\n  --header 'Content-Type: application/json'"
+}

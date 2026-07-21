@@ -1,0 +1,23 @@
+Delete an Individual Document
+DELETE
+https://external-integrations.mycase.com/v1/documents/{id}
+
+Allows you to delete a specfic document, based on the authorized user/firm priviledges.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the document you want to view or update.
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request DELETE \
+  --url https://external-integrations.mycase.com/v1/documents/{id} \
+  --header 'Content-Type: application/json'

@@ -1,0 +1,37 @@
+Get the Firm of the Current Authorized User
+GET
+https://external-integrations.mycase.com/v1/firm
+
+Allows you to view the firm of the current authorized user.
+
+Responses
+200
+
+OK
+
+Body
+application/json
+application/json
+name
+string
+
+The name of the firm.
+
+url
+string
+
+The firms MyCase url. This can be used as a unique identifier for the firm.
+
+Request Sample: Shell / cURL
+curl --request GET \
+  --url https://external-integrations.mycase.com/v1/firm \
+  --header 'Accept: application/json'
+Response Example
+1
+{
+2
+  "name": "string",
+3
+  "url": "string"
+4
+}

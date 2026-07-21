@@ -1,0 +1,65 @@
+Create a Referral Source
+POST
+https://external-integrations.mycase.com/v1/referral_sources
+
+Create a referral source.
+
+Request
+Body
+application/json
+application/json
+name
+string
+required
+
+The name of the referral source.
+
+Responses
+201
+
+Created
+
+Body
+application/json
+application/json
+id
+number
+
+A unique identifier for this resource.
+
+name
+string
+
+The name of the referral source.
+
+created_at
+string
+
+The date this resource was created in ISO 8601 date/time format.
+
+updated_at
+string
+
+The date this resource was updated in ISO 8601 date/time format.
+
+Request Sample: Shell / cURL
+curl --request POST \
+  --url https://external-integrations.mycase.com/v1/referral_sources \
+  --header 'Accept: application/json' \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "name": "string"
+}'
+Response Example
+1
+{
+2
+  "id": 0,
+3
+  "name": "string",
+4
+  "created_at": "string",
+5
+  "updated_at": "string"
+6
+}

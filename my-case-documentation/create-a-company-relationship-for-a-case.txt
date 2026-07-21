@@ -1,0 +1,46 @@
+Create a Company Relationship for a Case
+POST
+https://external-integrations.mycase.com/v1/cases/{id}/relationships/companies
+
+Create a company relationship for a specified case.
+
+Request
+Path Parameters
+id
+string
+required
+
+The id of the case you want to add companies to.
+
+Body
+application/json
+application/json
+companies
+array[object]
+
+A list of companies to add to the case.
+
+id
+integer
+role
+string
+
+The case role for this company on this case. If this matches a case role the firm already has created, that role will be used. If this does not match any case roles of the firm, a new case role will be created and that role will be used. (case insensitive)
+
+Responses
+204
+
+No Content
+
+Request Sample: Shell / cURL
+curl --request POST \
+  --url https://external-integrations.mycase.com/v1/cases/{id}/relationships/companies \
+  --header 'Content-Type: application/json' \
+  --data '{
+  "companies": [
+    {
+      "id": 0,
+      "role": "string"
+    }
+  ]
+}'
