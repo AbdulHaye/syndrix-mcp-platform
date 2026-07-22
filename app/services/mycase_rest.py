@@ -36,6 +36,7 @@ import asyncio
 import re
 import time
 import urllib.parse
+from datetime import date
 from typing import Any
 
 import httpx
@@ -1170,9 +1171,24 @@ class MyCaseREST:
     # merging two DIFFERENT real people who happen to have similar names, which is a
     # worse outcome than an occasional unmerged duplicate. Keys are matched against
     # the whitespace-collapsed, trimmed raw value, case-insensitively. Extend this
-    # as real duplicate spellings are found in the data — it's intentionally empty
-    # by default since no confirmed duplicates have been identified yet.
-    _AGENT_ALIAS_MAP: dict[str, str] = {}
+    # as real duplicate spellings are found in the data.
+    #
+    # Confirmed live against the firm's actual Processing Agent data (1,425 cases):
+    # these are first-name-only entries that always correlate to the same Case
+    # Manager/office as their full-name counterpart, and were confirmed by the firm
+    # to be the same person. "Jean-Baptiste Saint-Cyr (Moise)", "Fedna Delerme",
+    # "Marissa Marcellus", "Lucnise Regis", and "Past Agent" are left OUT of this map
+    # deliberately — they're already-canonical firm-confirmed agent names with no
+    # variant to merge. "Flooddy" and "Stephanie" are also left out — they don't
+    # match any name on the firm's confirmed agent list and were NOT to be
+    # force-merged into a guess.
+    _AGENT_ALIAS_MAP: dict[str, str] = {
+        "angelo": "Angelo Bazin",
+        "alexandra": "Alexandra Jean Charles",
+        "jean": "Jean Cadet",
+        "marjorie": "Marjorie Francois",
+        "madjelida": "Madjelida Macirus",
+    }
 
     @classmethod
     def _normalize_agent_name(cls, raw: str | None) -> str:
@@ -1202,6 +1218,8 @@ class MyCaseREST:
         opened_before: str | None = None,
         closed_after: str | None = None,
         closed_before: str | None = None,
+        days_to_close_min: int | None = None,
+        days_to_close_max: int | None = None,
         max_cases: int | None = None,
         limit: int | None = None,
         include_invoices: bool = False,
@@ -1210,8 +1228,13 @@ class MyCaseREST:
         server-side) — including case_stages (keep ONLY cases in one of these exact
         stages, if given) and excluding exclude_case_stages — then group the survivors
         by ``group_by`` (a builtin field name — practice_area/case_stage/status/
-        billing_type — or a CUSTOM FIELD NAME, e.g. "PROCESSING AGENT") and count per
-        group. Returns a flat, report-ready ``items`` array —
+        billing_type — "assigned_attorney"/"Lead Attorney" (the staff member flagged
+        lead_lawyer=true on the case, NOT a real MyCase field but computed here
+        specifically so it can be filtered/grouped like one) — or a CUSTOM FIELD
+        NAME, e.g. "PROCESSING AGENT") and count per group. custom_field_filters
+        also accepts "assigned_attorney"/"Lead Attorney" as a key the same way,
+        including the empty-string "no value" convention (see below) for "cases
+        with no Lead Attorney assigned". Returns a flat, report-ready ``items`` array —
         one row per surviving case, with EVERY field MyCase returns for that case
         (id, case_number, name, case_stage, practice_area, status, clients, staff,
         etc. — whatever get_cases returns) as its own column, PLUS:
@@ -1255,7 +1278,10 @@ class MyCaseREST:
 
         practice_area / custom_field_filters values match case-insensitively as a
         SUBSTRING (so filtering "Asylum" also matches "Asylum - Affirmative" and
-        "Asylum - Defense"). case_stages / exclude_case_stages match case-insensitively
+        "Asylum - Defense") — EXCEPT an empty string ("") as a custom_field_filters
+        value, which means the opposite: "this field is blank/unassigned" (e.g.
+        custom_field_filters={"PROCESSING AGENT": ""} for "cases with no Processing
+        Agent"). case_stages / exclude_case_stages match case-insensitively
         but EXACTLY (a stage name is a whole discrete value, not something to
         substring-match — "CLOSED" must not also pull in "CLOSED WITH BALANCE") —
         resolve the real stage strings via get_case_stages() first; don't guess them.
@@ -1269,22 +1295,69 @@ class MyCaseREST:
         MyCase has no server-side filter for opened_date/closed_date at all, and no
         exact/upper-bound filter for updated_at either — all of this is computed
         client-side in Python, same reliability pattern as everything else here.
+
+        `days_to_close_min` / `days_to_close_max` — for a DURATION question about a
+        SINGLE case's own opened_date vs closed_date ("cases closed within 1
+        month/30 days of opening", "cases that took longer than 90 days to close",
+        "cases resolved in under a week") — do NOT try to approximate this with
+        opened_after/opened_before/closed_after/closed_before: those are independent
+        ABSOLUTE date-range floors/ceilings across the whole matching set, not a
+        per-case gap between two of that SAME case's own fields, and combining them
+        cannot express "this case's own two dates were close together" (confirmed:
+        an earlier attempt at this used opened_after/opened_before/closed_after/
+        closed_before together and returned a wrong, coincidental set that had
+        nothing to do with any case's actual open-to-close duration). Pass
+        days_to_close_max=30 for "within 1 month" (calendar months vary in length,
+        so "1 month" is treated as 30 days), days_to_close_min for a floor, or both
+        for a range. Only cases with BOTH opened_date and closed_date set are
+        considered — a case with no closed_date can't have a close-duration, and is
+        excluded from the match rather than silently treated as 0 or infinite days.
         """
         name_to_id, id_to_name = await self._custom_field_maps()
         staff_names = await self._staff_name_map()
 
+        def lead_attorney_raw(case: dict[str, Any]) -> str | None:
+            """The staff member flagged lead_lawyer=true on this case, resolved to a
+            real name — or None if no staff member is so flagged. This is a COMPUTED
+            value (derived from the case's own `staff` array), never a real MyCase
+            field or custom field — so it can't go through resolve_field()'s normal
+            builtin/custom-field lookup. "assigned_attorney" is special-cased as a
+            pseudo-builtin field below specifically so "cases with no Lead Attorney"
+            can be filtered/grouped the same way as any other field, instead of the
+            group_by/custom_field_filters call failing outright (confirmed live: a
+            failed group_by="assigned_attorney" call made the agent silently fall
+            back to an UNFILTERED aggregate_cases call and then invent a plausible
+            but fabricated count in its reply — the displayed table was actually
+            every case in the firm, not the ones lacking a lead attorney)."""
+            for s in case.get("staff") or []:
+                if s.get("lead_lawyer") is True:
+                    sid = s.get("id")
+                    return staff_names.get(sid, f"staff #{sid}") if isinstance(sid, int) else None
+            return None
+
+        _COMPUTED_CASE_FIELDS = {"assigned_attorney", "lead attorney", "lead_attorney"}
+
         def resolve_field(field: str) -> tuple[bool, int | str]:
-            """Return (is_builtin, key) — key is the builtin field name, or the
-            resolved numeric custom-field id."""
+            """Return (is_builtin, key) — key is the builtin field name (or the
+            "assigned_attorney" computed-field sentinel), or the resolved numeric
+            custom-field id."""
             low = field.strip().lower()
             if low in self._BUILTIN_CASE_FIELDS:
                 return True, low
+            if low in _COMPUTED_CASE_FIELDS:
+                return True, "assigned_attorney"
             if low in name_to_id:
                 return False, name_to_id[low]
             raise ValueError(
-                f"'{field}' is not a builtin case field ({sorted(self._BUILTIN_CASE_FIELDS)}) "
-                f"or a known custom field name. Call get_custom_fields() to see valid names."
+                f"'{field}' is not a builtin case field ({sorted(self._BUILTIN_CASE_FIELDS)}), "
+                f"'assigned_attorney'/'Lead Attorney', or a known custom field name. Call "
+                f"get_custom_fields() to see valid custom field names."
             )
+
+        def builtin_value(case: dict[str, Any], key: str) -> str | None:
+            """case.get(key) for a real builtin field, except the "assigned_attorney"
+            sentinel, which is computed via lead_attorney_raw instead."""
+            return lead_attorney_raw(case) if key == "assigned_attorney" else case.get(key)
 
         filter_specs: list[tuple[bool, int | str, str]] = []
         for field, want in (custom_field_filters or {}).items():
@@ -1329,8 +1402,21 @@ class MyCaseREST:
             if include_stage_set and stage not in include_stage_set:
                 return False
             for is_builtin, key, want in filter_specs:
-                actual = case.get(key) if is_builtin else self._case_custom_value(case, key)  # type: ignore[arg-type]
-                if not actual or want not in actual.lower():
+                actual = builtin_value(case, key) if is_builtin else self._case_custom_value(case, key)  # type: ignore[arg-type]
+                actual_str = (actual or "").strip()
+                if not want:
+                    # An empty filter value means "this field is blank/unassigned" —
+                    # the natural way to ask for "cases with no Processing Agent",
+                    # "missing Case Manager", etc. Previously this branch fell into
+                    # the substring check below, where an empty `want` is trivially
+                    # `in` every non-blank string (so non-blank cases matched) while
+                    # `not actual` short-circuited blank cases OUT — the exact
+                    # opposite of "find the blank ones" (confirmed live: a "cases
+                    # with no Processing Agent" report came back with 1,425 cases
+                    # that all had a real agent assigned, and zero actually blank).
+                    if actual_str:
+                        return False
+                elif not actual_str or want not in actual_str.lower():
                     return False
             if (opened_after_d or opened_before_d) and not self._date_matches(
                 case.get("opened_date"), None, opened_after_d, opened_before_d
@@ -1344,13 +1430,26 @@ class MyCaseREST:
                 case.get("updated_at"), None, updated_after_d, updated_before_d
             ):
                 return False
+            if days_to_close_min is not None or days_to_close_max is not None:
+                opened_d = self._date_only(case.get("opened_date"))
+                closed_d = self._date_only(case.get("closed_date"))
+                if not opened_d or not closed_d:
+                    return False
+                try:
+                    days = (date.fromisoformat(closed_d) - date.fromisoformat(opened_d)).days
+                except ValueError:
+                    return False
+                if days_to_close_min is not None and days < days_to_close_min:
+                    return False
+                if days_to_close_max is not None and days > days_to_close_max:
+                    return False
             return True
 
         survivors = [c for c in all_cases if matches(c)]
 
         def group_value(case: dict[str, Any]) -> str:
             if group_is_builtin:
-                return case.get(group_key) or "(none)"  # type: ignore[arg-type]
+                return builtin_value(case, group_key) or "(none)"  # type: ignore[arg-type]
             val = self._case_custom_value(case, group_key)  # type: ignore[arg-type]
             return val or "(unassigned)"
 
@@ -1393,11 +1492,7 @@ class MyCaseREST:
             return ", ".join(names) if names else "(none)"
 
         def resolve_assigned_attorney(case: dict[str, Any]) -> str:
-            for s in case.get("staff") or []:
-                if s.get("lead_lawyer") is True:
-                    sid = s.get("id")
-                    return staff_names.get(sid, f"staff #{sid}") if isinstance(sid, int) else "(unassigned)"
-            return "(unassigned)"
+            return lead_attorney_raw(case) or "(unassigned)"
 
         items: list[dict[str, Any]] = []
         for c in survivors:
@@ -1408,6 +1503,14 @@ class MyCaseREST:
             row["assigned_attorney"] = resolve_assigned_attorney(c)
             row["group_name"] = g
             row["case_count"] = counts[g]
+            if days_to_close_min is not None or days_to_close_max is not None:
+                # Self-verifying: with the days_to_close_* filter active, show the
+                # real computed gap on every surviving row rather than making the
+                # user (or the model) trust the filter blindly.
+                row["days_to_close"] = (
+                    date.fromisoformat(self._date_only(c["closed_date"]))
+                    - date.fromisoformat(self._date_only(c["opened_date"]))
+                ).days
             items.append(row)
 
         display_items = items[:limit] if limit is not None else items

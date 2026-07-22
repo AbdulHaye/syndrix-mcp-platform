@@ -5,6 +5,7 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
+from langfuse import propagate_attributes
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -27,6 +28,16 @@ class PodioAgentRequest(BaseModel):
     history: list[AgentTurn] = Field(
         default_factory=list,
         description="Prior conversation turns for context",
+    )
+    session_id: str | None = Field(
+        None,
+        description=(
+            "The frontend's chat-session UUID (same id used for GET/PUT "
+            "/agent/podio/sessions/{id}) — passed through purely for Langfuse "
+            "tracing so every turn of one conversation groups under one session "
+            "in the dashboard instead of showing as unrelated traces. Optional; "
+            "has no effect on the agent's own behavior."
+        ),
     )
 
 
@@ -186,7 +197,11 @@ async def podio_agent(
     )
     try:
         history = [turn.model_dump() for turn in body.history]
-        return await run_podio_agent(body.message, history)
+        with propagate_attributes(
+            user_id=identity.team_name, session_id=body.session_id, tags=["podio-agent"],
+            metadata={"team": identity.team_name, "role": identity.role},
+        ):
+            return await run_podio_agent(body.message, history)
     except Exception as exc:  # noqa: BLE001
         logger.error("podio_agent_failed", error=str(exc))
         return {"success": False, "reply": "", "steps": [], "error": str(exc)}

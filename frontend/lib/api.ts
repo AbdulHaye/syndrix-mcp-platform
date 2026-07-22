@@ -150,11 +150,12 @@ export async function runPrompt(
 
 export async function runPodioAgent(
   message: string,
-  history: { role: string; content: string }[] = []
+  history: { role: string; content: string }[] = [],
+  sessionId?: string
 ): Promise<import("@/types").PodioAgentResponse> {
   return request<import("@/types").PodioAgentResponse>("/agent/podio", {
     method: "POST",
-    body: JSON.stringify({ message, history }),
+    body: JSON.stringify({ message, history, session_id: sessionId }),
   });
 }
 
@@ -212,11 +213,12 @@ export async function disconnectMyCase(): Promise<{ success: boolean }> {
 export async function runMyCaseAgent(
   message: string,
   history: { role: string; content: string }[] = [],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  sessionId?: string
 ): Promise<import("@/types").MyCaseAgentResponse> {
   return request<import("@/types").MyCaseAgentResponse>("/agent/mycase", {
     method: "POST",
-    body: JSON.stringify({ message, history }),
+    body: JSON.stringify({ message, history, session_id: sessionId }),
     signal,
   });
 }

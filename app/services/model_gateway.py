@@ -9,6 +9,7 @@ import httpx
 import structlog
 
 from app.config import get_settings
+from app.services.tracing import get_tracer
 
 logger = structlog.get_logger(__name__)
 
@@ -185,8 +186,41 @@ class ModelGateway:
         (a bare name defaults to Ollama). Returns the assistant message in a common
         shape: ``{"role": "assistant", "content": str, "tool_calls": [...]}`` where
         each tool call is ``{"function": {"name", "arguments"}}``.
+
+        Every call is wrapped as one Langfuse "generation" span here — this is
+        the SINGLE choke point every provider (and both the Podio and MyCase
+        agent loops) already funnels through, so instrumenting it once gives
+        full LLM-call tracing everywhere for free, with no per-provider changes
+        needed. No-ops safely if Langfuse isn't configured (see
+        app/services/tracing.py) — tracing must never be able to break a real
+        chat call, so failures here are surfaced on the span, not swallowed
+        silently, but the underlying request/response is untouched either way.
         """
         provider, name = self._split_model(model or self._default_model)
+        tracer = get_tracer()
+        with tracer.start_as_current_observation(
+            name="model_gateway.chat",
+            as_type="generation",
+            model=name,
+            input=messages,
+            metadata={"provider": provider, "num_predict": num_predict, "tool_count": len(tools or [])},
+        ) as generation:
+            try:
+                result = await self._dispatch_chat(provider, name, messages, tools, num_predict)
+            except Exception as exc:
+                generation.update(level="ERROR", status_message=str(exc))
+                raise
+            generation.update(output=result)
+            return result
+
+    async def _dispatch_chat(
+        self,
+        provider: str,
+        name: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        num_predict: int,
+    ) -> dict[str, Any]:
         if provider == "google":
             return await self._google_chat(messages, tools, name, num_predict)
         if provider == "groq":

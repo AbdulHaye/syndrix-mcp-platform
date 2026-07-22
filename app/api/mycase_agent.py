@@ -5,6 +5,7 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
+from langfuse import propagate_attributes
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -25,6 +26,16 @@ class AgentTurn(BaseModel):
 class MyCaseAgentRequest(BaseModel):
     message: str = Field(..., description="The user's natural-language instruction")
     history: list[AgentTurn] = Field(default_factory=list, description="Prior conversation turns for context")
+    session_id: str | None = Field(
+        None,
+        description=(
+            "The frontend's chat-session UUID (same id used for GET/PUT "
+            "/agent/mycase/sessions/{id}) — passed through purely for Langfuse "
+            "tracing so every turn of one conversation groups under one session "
+            "in the dashboard instead of showing as unrelated traces. Optional; "
+            "has no effect on the agent's own behavior."
+        ),
+    )
 
 
 def _require_bd_or_admin(identity: TeamIdentity) -> None:
@@ -55,7 +66,11 @@ async def mycase_agent(
     )
     try:
         history = [turn.model_dump() for turn in body.history]
-        return await run_mycase_agent(body.message, history)
+        with propagate_attributes(
+            user_id=identity.team_name, session_id=body.session_id, tags=["mycase-agent"],
+            metadata={"team": identity.team_name, "role": identity.role},
+        ):
+            return await run_mycase_agent(body.message, history)
     except Exception as exc:  # noqa: BLE001
         logger.error("mycase_agent_failed", error=str(exc))
         return {"success": False, "reply": "", "steps": [], "error": str(exc)}

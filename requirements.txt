@@ -18,3 +18,4 @@ pgvector>=0.3.0
 numpy>=1.26.0
 python-dotenv>=1.0.0
 aiosmtplib>=3.0.0
+langfuse>=4.14.0  # LLM observability/tracing — see app/services/tracing.py

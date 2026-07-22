@@ -970,7 +970,7 @@ export default function MyCaseAgentPage() {
     abortRef.current = controller;
 
     try {
-      const res = await runMyCaseAgent(trimmed, history, controller.signal);
+      const res = await runMyCaseAgent(trimmed, history, controller.signal, currentId);
       if (res.success) {
         setMessages((prev) => [...prev, { role: "assistant", content: res.reply, steps: res.steps }]);
       } else {

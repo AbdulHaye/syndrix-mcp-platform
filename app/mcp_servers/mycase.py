@@ -495,6 +495,14 @@ async def get_webhook_subscriptions() -> dict:
         "(all YYYY-MM-DD, inclusive): filter on the case's opened_date/closed_date/updated_at. "
         "MyCase has NO server-side filter for opened_date/closed_date at all — this computes "
         "them client-side, so they are always exact regardless of dataset size.\n\n"
+        "days_to_close_min/days_to_close_max: for a DURATION question about a case's OWN "
+        "opened_date vs closed_date ('cases closed within 1 month/30 days of opening', 'took "
+        "longer than 90 days to close') — do NOT approximate this with opened_after/"
+        "opened_before/closed_after/closed_before, those are independent absolute date-range "
+        "floors/ceilings across the whole matching set and cannot express 'this case's own two "
+        "dates were close together'. Pass days_to_close_max=30 for 'within 1 month' (1 month = "
+        "30 days here). Only cases with BOTH opened_date and closed_date set are matched; each "
+        "surviving row gets a `days_to_close` column with the real computed gap.\n\n"
         "Returns a flat items[] — one row per surviving case, with EVERY field MyCase returns "
         "for that case (id, case_number, name, case_stage, practice_area, status, clients, "
         "staff, etc.) as its own column, PLUS client_name (resolved from the case's clients) "
@@ -544,6 +552,8 @@ async def aggregate_cases(
     opened_before: str | None = None,
     closed_after: str | None = None,
     closed_before: str | None = None,
+    days_to_close_min: int | None = None,
+    days_to_close_max: int | None = None,
     limit: int | None = None,
     include_invoices: bool = False,
 ) -> dict:
@@ -553,6 +563,7 @@ async def aggregate_cases(
         status=status, updated_after=updated_after, updated_before=updated_before,
         opened_after=opened_after, opened_before=opened_before,
         closed_after=closed_after, closed_before=closed_before,
+        days_to_close_min=days_to_close_min, days_to_close_max=days_to_close_max,
         limit=limit, include_invoices=include_invoices,
     )
 

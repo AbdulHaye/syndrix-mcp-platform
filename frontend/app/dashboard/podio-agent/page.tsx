@@ -1129,7 +1129,7 @@ export default function PodioAgentPage() {
     setLoading(true);
 
     try {
-      const res = await runPodioAgent(messageToSend, history);
+      const res = await runPodioAgent(messageToSend, history, currentId);
       if (res.success) {
         setMessages((prev) => [
           ...prev,

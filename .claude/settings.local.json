@@ -48,7 +48,8 @@
       "Bash(PYTHONPATH=\"C:/Users/360SynergyTech/Downloads/syndrix-mcp-platform\" env/Scripts/python.exe \"C:/Users/360SYN~1/AppData/Local/Temp/claude/C--Users-360SynergyTech-Downloads-syndrix-mcp-platform/eb7f8e90-5ade-4d33-a9e5-ebd202ae9eae/scratchpad/check_flows.py\")",
       "Bash(env/Scripts/python.exe \"C:/Users/360SYN~1/AppData/Local/Temp/claude/C--Users-360SynergyTech-Downloads-syndrix-mcp-platform/eb7f8e90-5ade-4d33-a9e5-ebd202ae9eae/scratchpad/unit.py\")",
       "WebFetch(domain:mycaseapi.stoplight.io)",
-      "WebFetch(domain:supportcenter.mycase.com)"
+      "WebFetch(domain:supportcenter.mycase.com)",
+      "Bash(pip install *)"
     ]
   }
 }
