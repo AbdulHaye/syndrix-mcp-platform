@@ -41,9 +41,9 @@ export default function ContactResult({ data }: Props) {
         </div>
         <div>
           <div className="fw-bold">{name}</div>
-          {data.email && <div className="small text-muted">{String(data.email)}</div>}
+          {Boolean(data.email) && <div className="small text-muted">{String(data.email)}</div>}
         </div>
-        {data.stage && (
+        {Boolean(data.stage) && (
           <span className="badge bg-success ms-auto">{String(data.stage)}</span>
         )}
       </div>
@@ -53,7 +53,7 @@ export default function ContactResult({ data }: Props) {
         <Field label="Title"   value={data.title} />
         <Field label="Source"  value={data.source} />
         <Field label="Last Contacted" value={data.last_contacted} />
-        {data.tags && Array.isArray(data.tags) && (
+        {Array.isArray(data.tags) && (
           <div className="col-12 mt-1">
             <div className="small text-muted mb-1">Tags</div>
             <div className="d-flex flex-wrap gap-1">
@@ -64,7 +64,7 @@ export default function ContactResult({ data }: Props) {
           </div>
         )}
       </div>
-      {data.note && (
+      {Boolean(data.note) && (
         <div className="alert alert-info small mt-2 mb-0 py-2">
           <i className="bi bi-info-circle me-1" />{String(data.note)}
         </div>

@@ -16,8 +16,8 @@ export default function NoteResult({ data }: Props) {
       <i className="bi bi-check-circle-fill" />
       <div>
         Note created
-        {data.comment_id && <> — ID <code>{String(data.comment_id)}</code></>}
-        {data.note_id && <> — ID <code>{String(data.note_id)}</code></>}
+        {Boolean(data.comment_id) && <> — ID <code>{String(data.comment_id)}</code></>}
+        {Boolean(data.note_id) && <> — ID <code>{String(data.note_id)}</code></>}
       </div>
     </div>
   );

@@ -25,15 +25,15 @@ export function SkeletonCard() {
   );
 }
 
-export function SkeletonTable({ rows = 4 }: { rows?: number }) {
+export function SkeletonTable({ rows = 4, cols = 3 }: { rows?: number; cols?: number }) {
   return (
     <div className="bg-white rounded-3 border p-3">
       <Skeleton height="1rem" width="30%" className="mb-3" />
       {Array.from({ length: rows }).map((_, i) => (
         <div key={i} className="d-flex gap-3 mb-2">
-          <Skeleton height="0.85rem" width="25%" />
-          <Skeleton height="0.85rem" width="35%" />
-          <Skeleton height="0.85rem" width="20%" />
+          {Array.from({ length: cols }).map((__, j) => (
+            <Skeleton key={j} height="0.85rem" width={`${Math.round(100 / cols)}%`} />
+          ))}
         </div>
       ))}
     </div>
