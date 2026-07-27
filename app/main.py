@@ -178,10 +178,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — open in dev, restrict in prod
+# CORS — localhost:3000 always allowed for local dev; deployed frontend
+# origin(s) come from CORS_ORIGINS (comma-separated) in .env
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=get_settings().get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

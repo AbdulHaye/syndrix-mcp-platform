@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # Raw dev tokens string from env (format: team_name:token,team_name:token)
     dev_tokens: str = ""
 
+    # Comma-separated list of allowed CORS origins (e.g. deployed frontend URLs).
+    # localhost:3000 is always allowed for local dev regardless of this setting.
+    cors_origins: str = ""
+
     # Parsed token map — token -> team_name
     _token_map: dict[str, str] = {}
 
@@ -73,6 +77,14 @@ class Settings(BaseSettings):
 
     def get_token_map(self) -> dict[str, str]:
         return self._token_map
+
+    def get_cors_origins(self) -> list[str]:
+        origins = {"http://localhost:3000"}
+        for origin in self.cors_origins.split(","):
+            origin = origin.strip().rstrip("/")
+            if origin:
+                origins.add(origin)
+        return sorted(origins)
 
     @property
     def is_production(self) -> bool:
