@@ -758,10 +758,29 @@ function ModelSelector() {
 }
 
 function makeSessionId(): string {
+  // crypto.randomUUID() needs a secure context (HTTPS, or the localhost
+  // exception) — a plain-HTTP hosted deployment doesn't have it, so this
+  // silently falls through. crypto.getRandomValues() has no such restriction;
+  // build a real UUID v4 from it so the backend's UUID validation still
+  // accepts the id (a non-UUID id 400s and history silently never saves).
   try {
     if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   } catch {}
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+  } catch {}
+  // Last-resort fallback if crypto is entirely unavailable — still a
+  // valid-shaped v4 UUID, just not cryptographically random.
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
 }
 
 function deriveTitle(msgs: MyCaseChatMessage[]): string {
@@ -906,7 +925,12 @@ export default function MyCaseAgentPage() {
           return copy;
         });
       })
-      .catch(() => {});
+      .catch((err) => {
+        // Best-effort — keep the conversation in local state even if the save fails
+        // (e.g. transient network issue); it will retry on the next message. Still
+        // logged so a persistent failure (e.g. a rejected session id) isn't invisible.
+        console.error("Failed to save chat session", err);
+      });
   }, [messages, currentId, historyLoaded]);
 
   function newChat() {

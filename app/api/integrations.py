@@ -3,18 +3,22 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from app.auth.bearer import TeamIdentity, TeamRole, require_auth
+from app.services.request_origin import backend_origin, frontend_origin
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/integrations/podio", tags=["integrations"])
 
 _ALLOWED_ROLES = {TeamRole.BD, TeamRole.ADMIN}
-_FRONTEND_REDIRECT_DEFAULT = "http://localhost:3000/dashboard/podio-agent"
+_BACKEND_CALLBACK_PATH = "/integrations/podio/callback"
+_FRONTEND_PATH = "/dashboard/podio-agent"
+_FRONTEND_ORIGIN_DEFAULT = "http://localhost:3000"
+_FRONTEND_REDIRECT_DEFAULT = f"{_FRONTEND_ORIGIN_DEFAULT}{_FRONTEND_PATH}"
 
 
 def _require_bd_or_admin(identity: TeamIdentity) -> None:
@@ -23,12 +27,22 @@ def _require_bd_or_admin(identity: TeamIdentity) -> None:
 
 
 @router.get("/connect", summary="Start Podio MCP OAuth — returns the authorize URL")
-async def connect(identity: TeamIdentity = Depends(require_auth)) -> dict[str, Any]:
+async def connect(request: Request, identity: TeamIdentity = Depends(require_auth)) -> dict[str, Any]:
     _require_bd_or_admin(identity)
     from app.services.podio_mcp import podio_mcp
+    from app.services.settings_service import get_setting
+
+    # Derived from the request so Connect works on localhost, a hosted IP, or a
+    # future domain with zero manual URL configuration — a settings override
+    # (podio_mcp_redirect_uri / podio_mcp_frontend_redirect) still wins if set,
+    # e.g. for an exotic reverse-proxy setup this can't detect correctly.
+    redirect_uri = (await get_setting("podio_mcp_redirect_uri")) or f"{backend_origin(request)}{_BACKEND_CALLBACK_PATH}"
+    frontend_redirect = (await get_setting("podio_mcp_frontend_redirect")) or (
+        f"{frontend_origin(request, _FRONTEND_ORIGIN_DEFAULT)}{_FRONTEND_PATH}"
+    )
 
     try:
-        url = await podio_mcp.build_authorize_url()
+        url = await podio_mcp.build_authorize_url(redirect_uri, frontend_redirect)
         return {"success": True, "authorize_url": url}
     except Exception as exc:  # noqa: BLE001
         return {"success": False, "error": str(exc)}
@@ -44,14 +58,15 @@ async def callback(
     # No auth dependency: this is the OAuth provider's browser redirect, validated
     # by the PKCE `state` we issued.
     from app.services.podio_mcp import podio_mcp
-    from app.services.settings_service import get_setting
 
-    frontend = (await get_setting("podio_mcp_frontend_redirect")) or _FRONTEND_REDIRECT_DEFAULT
+    frontend = podio_mcp.peek_frontend_redirect(state) or _FRONTEND_REDIRECT_DEFAULT
 
     if error:
+        podio_mcp.discard_state(state)
         logger.warning("podio_mcp_oauth_error", error=error, detail=error_description)
         return RedirectResponse(f"{frontend}?podio=error&reason={error}")
     if not code or not state:
+        podio_mcp.discard_state(state)
         return RedirectResponse(f"{frontend}?podio=error&reason=missing_code")
 
     try:

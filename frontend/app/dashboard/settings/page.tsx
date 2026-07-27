@@ -30,12 +30,17 @@ const GROUPS: ServiceGroup[] = [
     icon: "bi-kanban-fill",
     color: "#10b981",
     description:
-      "Connects to Podio's hosted MCP server via OAuth. Enter the OAuth Client ID + Secret, " +
-      "Save, then click Connect on the Podio Agent page to log in. " +
-      "Register this redirect URI on your OAuth client: http://localhost:8000/integrations/podio/callback",
+      "Connects to Podio via OAuth — one Client ID/Secret pair powers both the hosted-MCP connection " +
+      "(Connect Podio, reads/search) and the REST connection (Connect Files, writes/files/flows). " +
+      "Enter it, Save, then click Connect Podio and Connect Files on the Podio Agent page to log in. " +
+      "The callback/redirect URLs are detected automatically from whatever host you're on (localhost, a hosted IP, " +
+      "or a domain) — nothing to fill in here for that. The one thing you still register on Podio's own site " +
+      "(podio.com/settings/api, on this Client ID's API key) is its Redirect URL, which must match this server's " +
+      "address — Podio ties one API key to one domain, so a key registered for localhost won't authorize from a " +
+      "hosted deployment or vice versa; generate a separate key per environment if you need both working at once.",
     fields: [
-      { key: "podio_mcp_client_id",     label: "OAuth Client ID",     placeholder: "your-podio-mcp-client-id" },
-      { key: "podio_mcp_client_secret", label: "OAuth Client Secret", placeholder: "your-podio-mcp-client-secret", secret: true },
+      { key: "podio_mcp_client_id",     label: "OAuth Client ID",     placeholder: "your-podio-client-id" },
+      { key: "podio_mcp_client_secret", label: "OAuth Client Secret", placeholder: "your-podio-client-secret", secret: true },
     ],
   },
   {

@@ -37,11 +37,13 @@ DEFAULTS = {
     # and causes "exchange_failed".
     "podio_rest_token_url": "https://api.podio.com/oauth/token/v2",
     "podio_rest_api_base": "https://api.podio.com",
-    "podio_rest_redirect_uri": "http://localhost:8000/integrations/podio-files/callback",
 }
 
-# state -> created_at (Podio's REST OAuth does not use PKCE; we still validate state).
-_state_store: dict[str, float] = {}
+# state -> (created_at, redirect_uri, frontend_redirect). redirect_uri/frontend_redirect
+# are derived per-request (see app/services/request_origin.py) so they're always correct
+# for whatever host the user is actually on — no manual per-environment URL configuration
+# needed. Podio's REST OAuth does not use PKCE; we still validate state.
+_state_store: dict[str, tuple[float, str, str]] = {}
 _STATE_TTL = 600
 
 
@@ -69,7 +71,7 @@ class PodioREST:
 
     # ── OAuth (authorization_code) ─────────────────────────────────────────────
 
-    async def build_authorize_url(self) -> str:
+    async def build_authorize_url(self, redirect_uri: str, frontend_redirect: str) -> str:
         client_id = await self._client_id()
         if not client_id:
             raise ValueError(
@@ -77,31 +79,42 @@ class PodioREST:
                 "(or podio_rest_client_id in Settings)."
             )
         authorize = await self._cfg("podio_rest_authorize_url")
-        redirect = await self._cfg("podio_rest_redirect_uri")
 
         state = secrets.token_urlsafe(24)
         self._gc_state()
-        _state_store[state] = time.time()
+        _state_store[state] = (time.time(), redirect_uri, frontend_redirect)
 
         params = {
             "client_id": client_id,
-            "redirect_uri": redirect,
+            "redirect_uri": redirect_uri,
             "response_type": "code",
             "state": state,
         }
         return f"{authorize}?{urllib.parse.urlencode(params)}"
 
+    @staticmethod
+    def peek_frontend_redirect(state: str | None) -> str | None:
+        if not state:
+            return None
+        entry = _state_store.get(state)
+        return entry[2] if entry else None
+
+    @staticmethod
+    def discard_state(state: str | None) -> None:
+        if state:
+            _state_store.pop(state, None)
+
     async def exchange_code(self, code: str, state: str) -> dict[str, Any]:
-        if state not in _state_store:
+        entry = _state_store.pop(state, None)
+        if not entry:
             raise ValueError("Invalid or expired OAuth state.")
-        _state_store.pop(state, None)
+        _, redirect_uri, _frontend = entry
 
         token_url = await self._cfg("podio_rest_token_url")
-        redirect = await self._cfg("podio_rest_redirect_uri")
         data = {
             "grant_type": "authorization_code",
             "code": code,
-            "redirect_uri": redirect,
+            "redirect_uri": redirect_uri,
             "client_id": await self._client_id(),
             "client_secret": await self._client_secret(),
         }
@@ -172,7 +185,7 @@ class PodioREST:
     @staticmethod
     def _gc_state() -> None:
         now = time.time()
-        for st in [s for s, ts in _state_store.items() if now - ts > _STATE_TTL]:
+        for st in [s for s, (ts, _, _) in _state_store.items() if now - ts > _STATE_TTL]:
             _state_store.pop(st, None)
 
     async def _auth_headers(self) -> dict[str, str]:

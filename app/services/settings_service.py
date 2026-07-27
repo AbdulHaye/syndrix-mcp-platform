@@ -28,8 +28,11 @@ _SECRET_KEYS = frozenset({
 ALL_SETTING_KEYS: list[str] = [
     "podio_mcp_client_id",
     "podio_mcp_client_secret",
+    "podio_mcp_redirect_uri",
     "podio_rest_client_id",
     "podio_rest_client_secret",
+    "podio_rest_redirect_uri",
+    "podio_mcp_frontend_redirect",
     "google_api_key",
     "groq_api_key",
     "mistral_api_key",

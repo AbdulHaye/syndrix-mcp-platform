@@ -24,12 +24,13 @@ DEFAULTS = {
     "podio_mcp_server_url": "https://mcp.podio.com/mcp",
     "podio_mcp_authorize_url": "https://mcp.podio.com/oauth/authorize",
     "podio_mcp_token_url": "https://mcp.podio.com/oauth/token",
-    "podio_mcp_redirect_uri": "http://localhost:8000/integrations/podio/callback",
 }
 
-# Short-lived PKCE store: state -> (code_verifier, created_at). In-memory is fine
-# for a single-instance deployment.
-_pkce_store: dict[str, tuple[str, float]] = {}
+# Short-lived PKCE store: state -> (code_verifier, created_at, redirect_uri, frontend_redirect).
+# redirect_uri/frontend_redirect are derived per-request (see app/services/request_origin.py)
+# so they're always correct for whatever host the user is actually on — no manual
+# per-environment URL configuration needed. In-memory is fine for a single-instance deployment.
+_pkce_store: dict[str, tuple[str, float, str, str]] = {}
 _PKCE_TTL = 600  # seconds
 
 
@@ -39,13 +40,12 @@ class PodioMCP:
 
     # ── OAuth ────────────────────────────────────────────────────────────────
 
-    async def build_authorize_url(self) -> str:
+    async def build_authorize_url(self, redirect_uri: str, frontend_redirect: str) -> str:
         client_id = await get_setting("podio_mcp_client_id")
         if not client_id:
             raise ValueError("Podio MCP Client ID is not configured (Settings → Podio).")
 
         authorize = await self._cfg("podio_mcp_authorize_url")
-        redirect = await self._cfg("podio_mcp_redirect_uri")
         scope = await get_setting("podio_mcp_scope") or ""
 
         # PKCE (S256)
@@ -57,12 +57,12 @@ class PodioMCP:
         )
         state = secrets.token_urlsafe(24)
         self._gc_pkce()
-        _pkce_store[state] = (verifier, time.time())
+        _pkce_store[state] = (verifier, time.time(), redirect_uri, frontend_redirect)
 
         params = {
             "response_type": "code",
             "client_id": client_id,
-            "redirect_uri": redirect,
+            "redirect_uri": redirect_uri,
             "state": state,
             "code_challenge": challenge,
             "code_challenge_method": "S256",
@@ -71,21 +71,34 @@ class PodioMCP:
             params["scope"] = scope
         return f"{authorize}?{urllib.parse.urlencode(params)}"
 
+    @staticmethod
+    def peek_frontend_redirect(state: str | None) -> str | None:
+        """Non-destructive lookup — used by the callback route to know where to
+        send the browser even before (or if) exchange_code() runs."""
+        if not state:
+            return None
+        entry = _pkce_store.get(state)
+        return entry[3] if entry else None
+
+    @staticmethod
+    def discard_state(state: str | None) -> None:
+        if state:
+            _pkce_store.pop(state, None)
+
     async def exchange_code(self, code: str, state: str) -> dict[str, Any]:
         entry = _pkce_store.pop(state, None)
         if not entry:
             raise ValueError("Invalid or expired OAuth state.")
-        verifier, _ = entry
+        verifier, _, redirect_uri, _frontend = entry
 
         client_id = await get_setting("podio_mcp_client_id")
         client_secret = await get_setting("podio_mcp_client_secret")
         token_url = await self._cfg("podio_mcp_token_url")
-        redirect = await self._cfg("podio_mcp_redirect_uri")
 
         data = {
             "grant_type": "authorization_code",
             "code": code,
-            "redirect_uri": redirect,
+            "redirect_uri": redirect_uri,
             "client_id": client_id,
             "code_verifier": verifier,
         }

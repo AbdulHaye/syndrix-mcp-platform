@@ -9,17 +9,21 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import RedirectResponse, Response
 
 from app.auth.bearer import TeamIdentity, TeamRole, require_auth
+from app.services.request_origin import backend_origin, frontend_origin
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/integrations/podio-files", tags=["integrations"])
 
 _ALLOWED_ROLES = {TeamRole.BD, TeamRole.ADMIN}
-_FRONTEND_REDIRECT_DEFAULT = "http://localhost:3000/dashboard/podio-agent"
+_BACKEND_CALLBACK_PATH = "/integrations/podio-files/callback"
+_FRONTEND_PATH = "/dashboard/podio-agent"
+_FRONTEND_ORIGIN_DEFAULT = "http://localhost:3000"
+_FRONTEND_REDIRECT_DEFAULT = f"{_FRONTEND_ORIGIN_DEFAULT}{_FRONTEND_PATH}"
 _MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
 
 
@@ -29,12 +33,22 @@ def _require_bd_or_admin(identity: TeamIdentity) -> None:
 
 
 @router.get("/connect", summary="Start Podio REST OAuth — returns the authorize URL")
-async def connect(identity: TeamIdentity = Depends(require_auth)) -> dict[str, Any]:
+async def connect(request: Request, identity: TeamIdentity = Depends(require_auth)) -> dict[str, Any]:
     _require_bd_or_admin(identity)
     from app.services.podio_rest import podio_rest
+    from app.services.settings_service import get_setting
+
+    # Derived from the request so Connect works on localhost, a hosted IP, or a
+    # future domain with zero manual URL configuration — a settings override
+    # (podio_rest_redirect_uri / podio_mcp_frontend_redirect) still wins if set.
+    redirect_uri = (await get_setting("podio_rest_redirect_uri")) or f"{backend_origin(request)}{_BACKEND_CALLBACK_PATH}"
+    frontend_redirect = (await get_setting("podio_mcp_frontend_redirect")) or (
+        f"{frontend_origin(request, _FRONTEND_ORIGIN_DEFAULT)}{_FRONTEND_PATH}"
+    )
 
     try:
-        return {"success": True, "authorize_url": await podio_rest.build_authorize_url()}
+        url = await podio_rest.build_authorize_url(redirect_uri, frontend_redirect)
+        return {"success": True, "authorize_url": url}
     except Exception as exc:  # noqa: BLE001
         return {"success": False, "error": str(exc)}
 
@@ -47,13 +61,14 @@ async def callback(
     error_description: str | None = Query(None),
 ) -> RedirectResponse:
     from app.services.podio_rest import podio_rest
-    from app.services.settings_service import get_setting
 
-    frontend = (await get_setting("podio_mcp_frontend_redirect")) or _FRONTEND_REDIRECT_DEFAULT
+    frontend = podio_rest.peek_frontend_redirect(state) or _FRONTEND_REDIRECT_DEFAULT
     if error:
+        podio_rest.discard_state(state)
         logger.warning("podio_rest_oauth_error", error=error, detail=error_description)
         return RedirectResponse(f"{frontend}?podio_files=error&reason={error}")
     if not code or not state:
+        podio_rest.discard_state(state)
         return RedirectResponse(f"{frontend}?podio_files=error&reason=missing_code")
     try:
         await podio_rest.exchange_code(code, state)
