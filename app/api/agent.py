@@ -39,6 +39,15 @@ class PodioAgentRequest(BaseModel):
             "has no effect on the agent's own behavior."
         ),
     )
+    confirmed_action: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Round-tripped from a previous response's pending_action, after the user "
+            "clicked Confirm on a proposed write action. When set, that exact "
+            "{tool, args} pair is pre-approved to execute this turn — omit entirely "
+            "for a normal turn."
+        ),
+    )
 
 
 def _require_bd_or_admin(identity: TeamIdentity) -> None:
@@ -201,7 +210,7 @@ async def podio_agent(
             user_id=identity.team_name, session_id=body.session_id, tags=["podio-agent"],
             metadata={"team": identity.team_name, "role": identity.role},
         ):
-            return await run_podio_agent(body.message, history)
+            return await run_podio_agent(body.message, history, confirmed_action=body.confirmed_action)
     except Exception as exc:  # noqa: BLE001
         logger.error("podio_agent_failed", error=str(exc))
         return {"success": False, "reply": "", "steps": [], "error": str(exc)}

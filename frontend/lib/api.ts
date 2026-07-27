@@ -151,11 +151,12 @@ export async function runPrompt(
 export async function runPodioAgent(
   message: string,
   history: { role: string; content: string }[] = [],
-  sessionId?: string
+  sessionId?: string,
+  confirmedAction?: import("@/types").PodioPendingAction
 ): Promise<import("@/types").PodioAgentResponse> {
   return request<import("@/types").PodioAgentResponse>("/agent/podio", {
     method: "POST",
-    body: JSON.stringify({ message, history, session_id: sessionId }),
+    body: JSON.stringify({ message, history, session_id: sessionId, confirmed_action: confirmedAction }),
   });
 }
 

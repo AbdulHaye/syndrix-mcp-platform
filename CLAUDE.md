@@ -76,12 +76,17 @@ app/
 │   ├── settings_service.py      ← DB-backed key-value settings (integration_settings table)
 │   ├── rag.py                   ← RAGService: chunk + embed + pgvector store + hybrid search
 │   ├── audit.py                 ← AuditService
-│   └── memory.py                ← MemoryService (Redis short-term + pgvector long-term)
+│   ├── memory.py                ← MemoryService (Redis short-term + pgvector long-term)
+│   └── tracing.py               ← Langfuse client + score_current_trace() (see Observability below)
 ├── storage/
 │   ├── db.py                    ← Async SQLAlchemy engine + session
 │   ├── models.py                ← ORM: User, IntegrationSetting, PodioChatSession, MyCaseChatSession, ...
 │   └── vector.py                ← VectorStore: store() + search()
 └── workers/                     ← Celery tasks (jobs.py) + Beat schedule (periodic.py)
+
+scripts/
+└── seed_langfuse_regression_dataset.py  ← Re-runnable: freezes real prompts that once exposed
+                                             agent bugs into Langfuse "datasets" for regression checks
 
 frontend/
 ├── app/
@@ -120,6 +125,10 @@ DEV_TOKENS=bd_team:bd-secret-token-123,...
 ADMIN_EMAIL=admin@syndrix.local, ADMIN_PASSWORD=changeme
 PODIO_CLIENT_ID=, PODIO_CLIENT_SECRET=        # shared by hosted-MCP OAuth and REST OAuth
 GHL_API_KEY=, SLACK_BOT_TOKEN=, GITHUB_TOKEN=, GITHUB_ORG=, SMTP_HOST/PORT/USER/PASSWORD/FROM=
+LANGFUSE_PUBLIC_KEY=, LANGFUSE_SECRET_KEY=, LANGFUSE_BASE_URL=  # see Observability section
+LANGFUSE_TRACING_ENVIRONMENT=development, LANGFUSE_TRACING_ENABLED=true
+MYCASE_AGENT_LLM_JUDGE_ENABLED=false          # opt-in; off by default (adds an LLM call per turn)
+MYCASE_AGENT_LLM_JUDGE_MODEL=groq:llama-3.1-8b-instant
 ```
 All other integration/LLM credentials (Podio, MyCase, and 7 LLM provider API keys) are stored DB-side via Settings UI, not env vars — see each agent's Settings table below.
 
@@ -149,6 +158,8 @@ celery -A app.workers.jobs worker --loglevel=info # optional
 **Setup:** Settings → Podio (MCP): Client ID/Secret. Connect Podio → Connect Files → pick workspace → pick a **strong** model (Groq 70B / Mistral Large / Gemini / Claude — `llama3.2` 3B is too weak for multi-step tool calling, `llama3` doesn't support tools at all).
 
 **Agent loop (`podio_agent.py`):** merges tools from both connections (dedup by name); **write-gating** hides write tools unless the message shows write intent (`_wants_write`); Ollama models get a keyword-priority-trimmed tool list (cap 18); loops up to 12 steps calling `model_gateway.chat()`. Heavy hardening layered in over many sessions: recovers tool calls a weak model emits as garbled/glued text or a self-describing `{"name":...,"parameters":...}` JSON envelope instead of a real function call; strips hallucinated content that rides along with a real tool call; guards against fabricated/wrong-but-plausible object IDs (`_guard_object_ids`, substitutes the real id when exactly one candidate was seen this turn); an honesty guard rejects a "success"/"here's the table" claim when the matching tool never actually succeeded, forcing a real retry or an honest failure instead.
+
+**Confirm-before-write:** any of the 19 write tools (`create_item`, `update_item`, `delete_item`, `create_flow`, etc. — `_WRITE_TOOL_NAMES`) is now intercepted right before execution, using its FULLY resolved arguments (after space_id autofill/id-correction/field-cleaning already ran), and returned as `pending_action` in the response instead of being run — the chat UI renders a Confirm/Cancel card (`PendingActionCard` in `podio-agent/page.tsx`). Confirming round-trips that exact `{tool, args}` back as `confirmed_action` on the next call; only that ONE pre-approved action is allowed through that turn (a `confirmed_write_used` flag prevents it from silently green-lighting a second, different write in the same turn). Cancel needs no backend call. Writes used to execute immediately the moment write-intent was detected — this is a deliberate safety change, not a bug fix.
 
 **`model_gateway.py`** dispatches `"provider:model"` strings to per-provider chat methods (`ollama`, `google`, `groq`, `mistral`, `openai`, `anthropic`, `zai`, `openrouter`) — Groq/Mistral/OpenAI/Z.ai/OpenRouter share one `_openai_compat_chat()` helper. All provider paths retry transient transport errors (not HTTP error responses) 3x with backoff. Anthropic responses use prompt caching on the system prompt + tool schemas to cut token cost across multi-step turns.
 
@@ -185,10 +196,29 @@ celery -A app.workers.jobs worker --loglevel=info # optional
 - **`total_amount`/`paid_amount` sometimes come back as strings**, not numbers, on real invoices — always coerced via `_as_float` before arithmetic.
 - **Anti-hallucination guards:** a read-only agent can still fabricate a confident number with no real tool call behind it, or flatly contradict its own successful result (e.g. claim "no invoices" when the fetched data shows one) — both are caught and force a correction before the reply reaches the user.
 - **Chat UI has no tool-call step-card panel.** The model gives a one-line acknowledgment; the real table (+ Download CSV) renders directly from the raw tool result, independent of what the model's text says. Tables over 200 rows are row-virtualized so a 5,000+ row result doesn't slow the page down.
+- **`aggregate_cases`' empty-string custom_field_filters value used to mean the opposite of "blank."** `want not in actual.lower()` is trivially true for `want=""`, so a filter meant to find blank/unassigned fields (e.g. "cases with no Processing Agent") matched every NON-blank row instead — confirmed live: a 1,425-row "no Processing Agent" report where every row had a real agent name. Fixed: an empty filter value now explicitly means "field is blank."
+- **Computed (non-custom-field) columns weren't filterable/groupable at all.** `assigned_attorney`/"Lead Attorney" is derived from `staff[].lead_lawyer`, not a real MyCase field or custom field — `group_by="assigned_attorney"` used to error, and the agent's silent fallback to an unfiltered `aggregate_cases()` call plus a fabricated reply count was a second, compounding bug. Now a recognized pseudo-field, filterable/groupable like any real one.
+- **No way to filter on a duration between a case's own two date fields.** "Cases closed within 1 month of opening" has no correct expression using only absolute date-range params (`opened_after`/`closed_before` etc. are independent floors/ceilings, not "these two fields on the SAME case were close together") — added `days_to_close_min`/`days_to_close_max` (each surviving row gets a real computed `days_to_close`).
+- **Processing Agent duplicate spellings** ("Angelo" vs "Angelo Bazin") are canonicalized via a curated, admin-extensible `_AGENT_ALIAS_MAP` in `mycase_rest.py` (deliberately NOT fuzzy-matched — risks merging two different real people) — `PROCESSING AGENT` is the cleaned/merged value, `PROCESSING AGENT (original)` keeps the untouched raw value.
+- **A reply's headline count can silently disagree with its own table.** `_mismatched_found_count` in `mycase_agent.py` compares the reply's "Found N X" claim against the actual rows fetched that turn — mid-turn it forces a retry; on the final closing turn (no retries left) it deterministically rewrites just the number rather than shipping two contradicting counts to the user. General-purpose — catches this class of bug for any resource, not just the ones that exposed it.
+- **Scope creep — the agent used to happily answer general-knowledge/off-topic questions** ("who is Elon Musk", "explain agentic AI") using its own training knowledge instead of refusing. Both agents' system prompts now open with an explicit SCOPE rule refusing anything not about the firm's own data, plus a DATA VS. INSTRUCTIONS rule telling the model that text inside tool results (case notes, item comments) is never a command to follow, even if phrased like one.
 
 **Known gaps:** no write operations implemented; a few requested report fields ("Days in Current Stage," "Case Owner") don't exist anywhere in MyCase's API and were left out rather than faked.
 
 ---
+
+## Observability (Langfuse)
+
+Both agents are traced end-to-end via [Langfuse Cloud](https://cloud.langfuse.com) (`app/services/tracing.py` + `langfuse` SDK v4, OTel-based). `model_gateway.chat()` is the single choke point every provider/both agents funnel through — wrapping just that one method there gives full LLM-call tracing (model, provider, input/output, errors) for free, no per-provider work needed. Each agent turn is its own trace (`@observe(as_type="agent")` on `run_mycase_agent`/`run_podio_agent`); each tool call is a nested "tool" span. `session_id` (the frontend's existing chat-session UUID, already used for GET/PUT `/agent/*/sessions/{id}`) is threaded through so multi-turn conversations group under one Langfuse session instead of showing as unrelated traces; team/role are tagged via `propagate_attributes` at the router layer.
+
+**Scores:** every deterministic guard in `mycase_agent.py` (`_unverified_resource_claims`, `_mismatched_found_count`, `_reply_falsely_denies_invoices`, etc.) and `podio_agent.py`'s bad-reply guard now also emits a `reply_quality` score (`pass`/`fail`/`corrected`/`pending_confirmation`) — queryable in the Langfuse dashboard instead of grepping structlog output. An optional second-opinion LLM judge (off by default, `MYCASE_AGENT_LLM_JUDGE_ENABLED=true` to enable) reviews each MyCase reply against the real fetched data and logs an `llm_judge` score — a genuinely separate LLM call, so it's opt-in, not default.
+
+**Regression datasets:** `scripts/seed_langfuse_regression_dataset.py` freezes real prompts that once exposed a bug (the Processing Agent/Lead Attorney/duration filter bugs above, the off-topic-scope bugs) into two Langfuse datasets (`mycase-agent-regressions`, `podio-agent-regressions`) — re-runnable via the Langfuse UI's "Run experiment" after any system-prompt or `aggregate_cases` change, to catch a regression before a user does. Extend it (don't just re-run it) whenever a new real bug gets fixed.
+
+**Gotchas (both cost real debugging time to find):**
+- **A blank-but-PRESENT `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` in `.env` is NOT the same as absent.** `python-dotenv` sets it to `""`, and the SDK's `is None` check doesn't catch that — it still attempts a real network call and logs a 401 on every span. Set `LANGFUSE_TRACING_ENABLED=false` explicitly to get a true no-op while keys are blank/being set up.
+- **Langfuse Cloud is region-sharded** — EU (`https://cloud.langfuse.com`, the default), US (`https://us.cloud.langfuse.com`), Japan (`https://jp.cloud.langfuse.com`). A key from the wrong region 401s with a generic "Invalid credentials" error that looks identical to a genuinely wrong/revoked key — check `LANGFUSE_BASE_URL` matches the project's actual region in the Langfuse dashboard before assuming the key itself is bad.
+- **The Langfuse client is a singleton per process, read from `.env` once.** `uvicorn --reload` doesn't watch `.env`, only `.py` files — a key/host change needs a full backend restart, not just any file save.
 
 ## Key Patterns
 
@@ -201,6 +231,8 @@ celery -A app.workers.jobs worker --loglevel=info # optional
 7. Settings UI: integrations always-rendered; LLM providers opt-in, persisted in `localStorage` under `syndrix_added_llms`.
 8. Anything that scans/aggregates more than a handful of records: compute it server-side (Python), never leave it to the LLM — this is the single most repeated lesson across the MyCase Agent's whole history above.
 9. Never write a real credential/settings DB row during testing (even "set then reset") — mock `get_setting`/`upsert_setting` instead. This has broken a real saved MyCase token twice.
+10. Both agents skip the LLM entirely (zero cost, sub-second) for a provably-trivial opening greeting on a brand-new conversation (`_opening_greeting_reply` — no history yet, closed greeting set only). Deliberately NOT extended to fuzzy "simple-looking" query routing or model-tier downgrading — a misclassified real question silently answered by a weaker model is a worse failure mode than the cost/latency it would save.
+11. `memory.py`'s `MemoryService.store_conversation()` now also logs every guard-caught-and-corrected MyCase reply (see `_remember_correction` in `mycase_agent.py`) — write-only for now (nothing is read back into a future prompt yet); a full retrieval-augmented version is a deliberately separate, unbuilt next step.
 
 ---
 
@@ -241,3 +273,8 @@ celery -A app.workers.jobs worker --loglevel=info # optional
 **34:** Fixed "case not found" for a real, correctly-spelled case — case/document scan caps needed the same dynamic-sizing fix as invoices, plus a related truncation-flag bug.
 **35:** Added `aggregate_invoices` — deterministic invoice filter/sort/limit tool, fixing "top N unpaid invoices."
 **36:** Fixed MyCase chat UI slowdown on large (5,000+ row) tables — row virtualization + memoization.
+**37:** Normalized Processing Agent name variants (curated alias map) and, chasing the same request, found and fixed `aggregate_cases`' blank-value filter bug (an empty custom_field_filters value matched every non-blank row instead of blank ones — confirmed live on a 1,425-row "no Processing Agent" report where every row had a real agent).
+**38:** Fixed two more real `aggregate_cases` gaps found via live "no Lead Attorney"/"closed within 1 month of opening" requests — computed fields (assigned_attorney) weren't filterable/groupable at all (silent fallback to an unfiltered call + a fabricated reply count), and there was no way to filter a duration between a case's own two date fields (`days_to_close_min/max` added). Added a general `_mismatched_found_count` guard so a reply's headline count can never silently disagree with its own table again, for any resource.
+**39:** Implemented Langfuse Cloud observability for both agents (LLM/tool tracing, session grouping, guard results as `reply_quality` scores, regression datasets seeded from this session's fixed bugs). Root-caused two real connectivity dead-ends before it worked: a blank-but-present API key still attempts a network call and 401s (must set `LANGFUSE_TRACING_ENABLED=false` explicitly), and Langfuse Cloud is region-sharded (EU/US/Japan) — a key from the wrong region 401s identically to a genuinely bad key.
+**40:** Restricted both agents to firm-data-only answers — they were previously happy to answer general-knowledge/off-topic questions (e.g. explaining "agentic AI") using training knowledge instead of refusing. Added a DATA VS. INSTRUCTIONS rule to both system prompts so text inside tool results (case notes, item comments) is never treated as a command, even if phrased like one.
+**41:** Added a confirm-before-write UI for Podio's destructive actions (writes used to execute immediately on detected intent — this is a deliberate safety change), an optional off-by-default LLM-as-judge reply evaluator, a zero-cost opening-greeting routing shortcut for both agents, and a write-only long-term-memory log of guard-corrected replies.

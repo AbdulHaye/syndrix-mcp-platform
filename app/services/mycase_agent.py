@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.parse
 from datetime import datetime
@@ -638,6 +639,144 @@ OUTPUT FORMAT
 - Never output raw JSON."""
 
 
+# ── Routing: skip the LLM entirely for a provably-trivial opening message ────────
+# Anthropic's "routing" pattern (classify, then dispatch differently) applied
+# conservatively: only an OPENING greeting on a brand-new conversation (no history
+# yet) is safe to short-circuit with zero LLM calls — a short reply like "ok" or
+# "thanks" MID-conversation could be a substantive response to something the agent
+# just asked ("should I proceed?"), so those are deliberately NOT included here even
+# though they look similarly trivial; only a closed set of greetings that could
+# never themselves be a real question are matched. This is the safe subset of
+# query-complexity routing — full model-tier routing (auto-downgrading a "simple-
+# looking" query to a cheaper/weaker model) was deliberately NOT implemented: this
+# session's own debugging showed how easily a weaker model produces a confidently
+# wrong answer, and a fuzzy complexity classifier misjudging a real question as
+# "simple" would silently reintroduce that exact risk.
+_OPENING_GREETING_RE = re.compile(
+    r"^\s*(hi|hello|hey|hiya|yo|good morning|good afternoon|good evening)[\s!.,]*$",
+    re.IGNORECASE,
+)
+
+
+def _opening_greeting_reply(message: str, history: list[dict[str, str]] | None) -> str | None:
+    if history:
+        return None
+    if not _OPENING_GREETING_RE.match((message or "").strip()):
+        return None
+    return "Hi! Ask me anything about your firm's MyCase data — cases, clients, invoices, documents, and more."
+
+
+# ── Optional LLM-as-judge evaluator (Anthropic "evaluator-optimizer" pattern) ────
+# Off by default (set MYCASE_AGENT_LLM_JUDGE_ENABLED=true to turn on) — this is a
+# SEPARATE LLM call made AFTER the reply is already finalized, purely for Langfuse
+# observability (it never changes what the user sees or blocks the response), so it
+# adds real latency/cost to every turn once enabled. That's a deliberate opt-in, not
+# a default — "start simple" (Anthropic's own top recommendation) argues against
+# always-on extra LLM calls until there's a demonstrated need for what only an LLM
+# judge can catch. This complements, never replaces, the deterministic regex guards
+# above (_unverified_resource_claims, _mismatched_found_count, etc.) — those stay
+# authoritative for anything they can check exactly; this is for subtler issues no
+# regex can catch (tone, completeness, quietly answering a different question than
+# what was asked).
+_LLM_JUDGE_ENABLED = os.environ.get("MYCASE_AGENT_LLM_JUDGE_ENABLED", "false").lower() == "true"
+_LLM_JUDGE_MODEL = os.environ.get("MYCASE_AGENT_LLM_JUDGE_MODEL", "groq:llama-3.1-8b-instant")
+
+_JUDGE_PROMPT = """You are a strict quality auditor reviewing ONE reply from a MyCase legal-practice-management chat assistant, after the fact. You did not participate in the conversation.
+
+USER'S QUESTION:
+{message}
+
+ASSISTANT'S REPLY:
+{reply}
+
+REAL DATA THE ASSISTANT ACTUALLY FETCHED THIS TURN (ground truth — the reply must be consistent with this, not with whatever sounds plausible):
+{tool_summary}
+
+Judge the reply on exactly these axes:
+1. Does it actually answer what the user asked (not a different, related question)?
+2. Is every factual claim in it consistent with the real fetched data above (no invented numbers, no contradicted claims)?
+3. Is it free of content unrelated to MyCase (no off-topic general-knowledge answers)?
+
+Respond with EXACTLY one line in this format, nothing else, no explanation before or after:
+VERDICT: <pass|fail> | REASON: <one short sentence>
+"""
+
+
+def _summarize_tool_results_for_judge(items_by_resource: dict[str, dict[Any, dict]]) -> str:
+    if not items_by_resource:
+        return "(no data was fetched this turn)"
+    return "\n".join(f"- {resource}: {len(bucket)} row(s) fetched" for resource, bucket in items_by_resource.items())
+
+
+_JUDGE_VERDICT_RE = re.compile(r"VERDICT:\s*(pass|fail)\s*\|\s*REASON:\s*(.+)", re.IGNORECASE)
+
+
+async def _run_llm_judge(
+    message: str, reply: str, items_by_resource: dict[str, dict[Any, dict]],
+) -> None:
+    """Best-effort second opinion on the just-finished reply, logged as a Langfuse
+    score. Never raises, never affects the actual response — this always runs
+    strictly AFTER final_text is already decided, so a failure here (bad model
+    response, network issue) can only cost a missing score, never a broken turn."""
+    if not _LLM_JUDGE_ENABLED or not reply:
+        return
+    try:
+        tracer = get_tracer()
+        with tracer.start_as_current_observation(
+            name="llm_judge", as_type="evaluator", input={"message": message, "reply": reply},
+        ) as judge_span:
+            prompt = _JUDGE_PROMPT.format(
+                message=message, reply=reply,
+                tool_summary=_summarize_tool_results_for_judge(items_by_resource),
+            )
+            judge_reply = await model_gateway.chat(
+                [{"role": "user", "content": prompt}], model=_LLM_JUDGE_MODEL, num_predict=100,
+            )
+            verdict_text = (judge_reply or {}).get("content", "") or ""
+            judge_span.update(output=verdict_text)
+            m = _JUDGE_VERDICT_RE.search(verdict_text)
+            if m:
+                score_current_trace("llm_judge", m.group(1).lower(), comment=m.group(2).strip())
+            else:
+                logger.warning("mycase_agent_llm_judge_unparseable", raw=verdict_text[:200])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("mycase_agent_llm_judge_failed", error=str(exc))
+
+
+# ── Long-term memory: durable log of guard-caught-and-corrected replies ──────────
+# Ascendion's "long-term memory" pillar, scoped conservatively: this is WRITE-ONLY —
+# nothing here is read back into a future prompt yet. A full retrieval-augmented
+# version (surfacing similar past corrections as context for a related future
+# question, replacing the need to hand-maintain things like mycase_rest.py's
+# _AGENT_ALIAS_MAP after every incident) was deliberately NOT built in the same
+# pass as this — which past corrections are actually USEFUL to inject, versus which
+# would just add retrieval noise to an already carefully-tuned prompt, needs its own
+# validation before being wired into every live request; that's real, separate work.
+# This still has value on its own: a durable, semantically-searchable record of
+# every incident where the deterministic guards caught and fixed a wrong reply,
+# queryable later via MemoryService.retrieve_similar() for pattern review.
+async def _remember_correction(message: str, mismatch: tuple[str, int, int]) -> None:
+    """Never raises — MemoryService.store_conversation already degrades gracefully
+    on any internal failure (embedding, vector store, Redis), and monitoring must
+    never be able to break the primary agent response either way."""
+    try:
+        from app.services.memory import memory_service
+
+        resource, claimed, actual = mismatch
+        summary = (
+            f"MyCase Agent question: {message!r} — the model's stated count ({claimed}) "
+            f"did not match the real fetched {resource} data ({actual}); auto-corrected "
+            "before reaching the user."
+        )
+        await memory_service.store_conversation(
+            team="mycase_agent",
+            summary=summary,
+            metadata={"category": "guard_corrected", "resource": resource, "claimed": claimed, "actual": actual},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("mycase_agent_remember_correction_failed", error=str(exc))
+
+
 def _current_date_header() -> str:
     now = datetime.now().astimezone()
     return (
@@ -653,6 +792,11 @@ async def run_mycase_agent(message: str, history: list[dict[str, str]] | None = 
     for a read-only tool set (no write-gating needed) — but a read CAN still be
     hallucinated (a confident, plausible "Found 1,023 leads" with no real get_leads
     call behind it), so _unverified_resource_claims still guards against that below."""
+    greeting_reply = _opening_greeting_reply(message, history)
+    if greeting_reply is not None:
+        score_current_trace("reply_quality", "pass", comment="routed: opening greeting, no LLM call")
+        return {"success": True, "reply": greeting_reply, "steps": [], "model": "(routed — no LLM call)"}
+
     from app.services.settings_service import get_setting
 
     model = (await get_setting("mycase_agent_model")) or f"ollama:{model_gateway.route_model('chat')}"
@@ -942,6 +1086,7 @@ async def run_mycase_agent(message: str, history: list[dict[str, str]] | None = 
                 if m:
                     candidate = candidate[: m.start(1)] + f"{_actual:,}" + candidate[m.end(1) :]
                 score_current_trace("reply_quality", "corrected", comment=str(still_mismatch))
+                await _remember_correction(message, still_mismatch)
             else:
                 score_current_trace("reply_quality", "pass")
             final_text = _augment_reply_with_missing_data(candidate, items_by_resource, resource_totals, count_only)
@@ -960,4 +1105,5 @@ async def run_mycase_agent(message: str, history: list[dict[str, str]] | None = 
             final_text = " ".join(parts) or "Done."
 
     final_text = _strip_download_link_urls(final_text, download_urls)
+    await _run_llm_judge(message, final_text, items_by_resource)
     return {"success": True, "reply": final_text, "steps": steps, "model": model}

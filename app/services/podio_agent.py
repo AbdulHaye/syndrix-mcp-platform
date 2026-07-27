@@ -268,6 +268,50 @@ _WRITE_TOOL_NAMES = {
     "clone_item", "bulk_delete_items", "update_item_field", "revert_item_revision",
 }
 
+# Human-readable, deterministic description of a pending write action — used for the
+# confirm-before-executing UI (see run_podio_agent's confirmed_action handling below).
+# Deliberately templated rather than asking the model to describe its own action:
+# the model's accompanying text is discarded whenever it makes a tool call (see
+# "assistant_msg = {**assistant_msg, "content": None}" below), so nothing reliable
+# is available from the model itself at the exact moment a write is proposed — and a
+# fixed template is testable/consistent in a way a second LLM call for description
+# purposes would not be, for what's meant to be a clear, trustworthy confirmation
+# prompt before a real, irreversible-by-us action.
+_PENDING_ACTION_TEMPLATES: dict[str, Any] = {
+    "create_item": lambda a: f"create a new item in app {a.get('app_id')} with these field values: {a.get('fields') or {}}",
+    "update_item": lambda a: f"update item {a.get('item_id')} with these field changes: {a.get('fields') or {}}",
+    "delete_item": lambda a: f"DELETE item {a.get('item_id')} — this cannot be undone",
+    "add_comment": lambda a: f"add this comment to item {a.get('item_id')}: \"{a.get('comment_text') or a.get('value') or ''}\"",
+    "create_task": lambda a: f"create a new task: \"{a.get('text', '(no title)')}\"",
+    "update_task": lambda a: f"update task {a.get('task_id')} with these changes: {({k: v for k, v in a.items() if k != 'task_id'})}",
+    "complete_task": lambda a: f"mark task {a.get('task_id')} as complete",
+    "delete_task": lambda a: f"DELETE task {a.get('task_id')} — this cannot be undone",
+    "attach_file_to_item": lambda a: f"attach file {a.get('file_id')} to item {a.get('item_id')}",
+    "set_item_image": lambda a: f"set the image on item {a.get('item_id')}",
+    "delete_file": lambda a: f"DELETE file {a.get('file_id')} — this cannot be undone",
+    "create_flow": lambda a: f"create a new automation flow on app {a.get('app_id')}: \"{a.get('name', '')}\"",
+    "update_flow": lambda a: f"update automation flow {a.get('flow_id')}",
+    "delete_flow": lambda a: f"DELETE automation flow {a.get('flow_id')} — this cannot be undone",
+    "create_webhook": lambda a: f"create a new webhook subscription for {a.get('ref_type')} {a.get('ref_id')}",
+    "delete_webhook": lambda a: f"DELETE webhook {a.get('webhook_id')} — this cannot be undone",
+    "clone_item": lambda a: f"clone item {a.get('item_id')} into a new item",
+    "bulk_delete_items": lambda a: f"DELETE {len(a.get('item_ids') or [])} item(s) — this cannot be undone",
+    "update_item_field": lambda a: f"update field {a.get('field_id')} on item {a.get('item_id')} to: {a.get('value')}",
+    "revert_item_revision": lambda a: f"revert item {a.get('item_id')} to an earlier revision — this discards changes made since",
+}
+
+
+def _describe_pending_action(name: str, args: dict[str, Any]) -> str:
+    describe = _PENDING_ACTION_TEMPLATES.get(name)
+    try:
+        action_text = describe(args) if describe else f"call {name} with {args}"
+    except Exception:  # noqa: BLE001 — a malformed args shape must never crash the confirm flow
+        action_text = f"call {name} with {args}"
+    return (
+        f"I'm about to {action_text}.\n\nThis will make a real change in Podio — "
+        "confirm to proceed, or cancel."
+    )
+
 
 _TEMPLATE_VAR_RE = re.compile(r"\{[a-z_]{2,}\}")  # e.g. {item_id}, {task_id}, {item_title}
 # Matches tool calls written as plain text: get_items":{ / get_items({ / get_items: {
@@ -347,6 +391,26 @@ def _is_hallucinated_write(text: str, steps: list[dict]) -> bool:
 def _wants_write(message: str) -> bool:
     m = (message or "").lower()
     return any(w in m for w in _WRITE_WORDS)
+
+
+# ── Routing: skip the LLM entirely for a provably-trivial opening message ────────
+# Same conservative "routing" pattern as the MyCase Agent (see its own comment for
+# the full rationale) — only an OPENING greeting on a brand-new conversation (no
+# history yet) is safe to short-circuit with zero LLM calls; anything mid-
+# conversation is left to the model, since a short reply could be a substantive
+# response to something the agent just asked.
+_OPENING_GREETING_RE = re.compile(
+    r"^\s*(hi|hello|hey|hiya|yo|good morning|good afternoon|good evening)[\s!.,]*$",
+    re.IGNORECASE,
+)
+
+
+def _opening_greeting_reply(message: str, history: list[dict[str, str]] | None) -> str | None:
+    if history:
+        return None
+    if not _OPENING_GREETING_RE.match((message or "").strip()):
+        return None
+    return "Hi! Ask me anything about your firm's Podio workspace — items, apps, tasks, calendar, and more."
 
 
 # ── get_app field-schema compaction ────────────────────────────────────────────
@@ -1417,6 +1481,7 @@ def _clean_fields(fields: Any) -> Any:
 async def run_podio_agent(
     message: str,
     history: list[dict[str, str]] | None = None,
+    confirmed_action: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Run one turn of the Podio agent against Podio's hosted MCP server.
@@ -1424,7 +1489,25 @@ async def run_podio_agent(
     ``history`` is a list of prior ``{"role": "user"|"assistant", "content": str}``
     turns. Returns ``{"success", "reply", "steps", "model"}`` where ``steps`` is a
     trace of every Podio MCP tool the model invoked.
+
+    ``confirmed_action`` — the confirm-before-write flow: any write tool (see
+    _WRITE_TOOL_NAMES) is intercepted BEFORE execution and returned as a
+    ``pending_action`` ({"tool": name, "args": <fully resolved args>}) instead of
+    being run, so the frontend can show the user exactly what's about to happen and
+    require an explicit Confirm click. When the user confirms, the frontend calls
+    this function again with that exact ``pending_action`` dict passed back as
+    ``confirmed_action`` — this turn, a directive is injected telling the model to
+    call it now, and the interception is bypassed for THAT ONE confirmed call only
+    (any OTHER write tool proposed in the same confirmed turn is still intercepted
+    and needs its own separate confirmation — see the `_confirmed_write_used` flag
+    below). A cancel needs no backend call at all; the frontend just discards the
+    pending_action locally.
     """
+    greeting_reply = _opening_greeting_reply(message, history)
+    if greeting_reply is not None and confirmed_action is None:
+        score_current_trace("reply_quality", "pass", comment="routed: opening greeting, no LLM call")
+        return {"success": True, "reply": greeting_reply, "steps": [], "model": "(routed — no LLM call)"}
+
     # Active model is a 'provider:model' string chosen in the UI (Ollama or Google).
     from app.services.settings_service import get_setting
 
@@ -1566,6 +1649,27 @@ async def run_podio_agent(
         if role in ("user", "assistant") and content:
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": message})
+    confirmed_tool_name: str | None = None
+    if confirmed_action and isinstance(confirmed_action.get("tool"), str):
+        confirmed_tool_name = confirmed_action["tool"]
+        confirmed_args = confirmed_action.get("args") or {}
+        messages.append({
+            "role": "user",
+            "content": (
+                f"CONFIRMED: the user just clicked Confirm on this exact pending action — call "
+                f"{confirmed_tool_name} now with EXACTLY these arguments and no others: "
+                f"{json.dumps(confirmed_args, default=str)}. Do not modify any value, do not ask "
+                "again, do not call any OTHER write tool in this turn. After it runs, report the "
+                "real result (success or the real error) based only on what the tool actually "
+                "returned — do not restate a success claim beyond that."
+            ),
+        })
+    # Tracks whether the one pre-approved confirmed write has already executed this
+    # turn — set True the moment it runs (see the tool-execution block below). Any
+    # OTHER write tool call this turn (before or after) is still intercepted and
+    # requires its own fresh confirmation; confirming one action must not silently
+    # green-light a different or additional one the user never saw.
+    confirmed_write_used = False
 
     steps: list[dict[str, Any]] = []
     final_text = ""
@@ -1774,9 +1878,29 @@ async def run_podio_agent(
                 logger.warning("podio_agent_id_corrected", tool=name, note=note)
 
             logger.info("podio_agent_tool_call", tool=name, args=args)
+            is_pre_approved = (
+                confirmed_tool_name is not None and name == confirmed_tool_name and not confirmed_write_used
+            )
             if name not in valid_names:
                 result: dict[str, Any] = {"isError": True, "content": f"Unknown tool '{name}'"}
+            elif name in _WRITE_TOOL_NAMES and not is_pre_approved:
+                # Pause here instead of executing — args are already FULLY resolved
+                # (space_id autofilled, ids corrected, fields cleaned) at this exact
+                # point, so the frontend round-trips this same {tool, args} pair back
+                # unchanged as confirmed_action once the user clicks Confirm. Any
+                # prior READS this turn already ran and are included in `steps`.
+                logger.info("podio_agent_write_pending_confirmation", tool=name, args=args)
+                score_current_trace("reply_quality", "pending_confirmation", comment=name)
+                return {
+                    "success": True,
+                    "reply": _describe_pending_action(name, args),
+                    "steps": steps,
+                    "model": model,
+                    "pending_action": {"tool": name, "args": args},
+                }
             else:
+                if is_pre_approved:
+                    confirmed_write_used = True
                 with get_tracer().start_as_current_observation(name=name, as_type="tool", input=args) as tool_span:
                     try:
                         if name in files_tool_names:

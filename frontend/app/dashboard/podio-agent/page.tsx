@@ -27,7 +27,7 @@ import { getAuth } from "@/lib/auth";
 import { useToast } from "@/lib/toast";
 import Markdown from "@/components/Markdown";
 import JsonTree from "@/components/JsonTree";
-import type { PodioChatMessage, PodioAgentStep, PodioChatSessionSummary } from "@/types";
+import type { PodioChatMessage, PodioAgentStep, PodioChatSessionSummary, PodioPendingAction } from "@/types";
 
 const TOOL_META: Record<string, { label: string; icon: string; color: string }> = {
   // Podio MCP tool names
@@ -379,7 +379,98 @@ function SectionLabel({ children }: { children: ReactNode }) {
   );
 }
 
-function MessageBubble({ msg }: { msg: PodioChatMessage }) {
+function PendingActionCard({
+  action,
+  onConfirm,
+  onCancel,
+}: {
+  action: PodioPendingAction;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const [showArgs, setShowArgs] = useState(false);
+  return (
+    <div
+      style={{
+        border: "1px solid #fbbf24",
+        borderRadius: 10,
+        background: "#fffbeb",
+        padding: "0.6rem 0.7rem",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <i className="bi bi-exclamation-triangle-fill" style={{ color: "#f59e0b", fontSize: "0.8rem" }} />
+        <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "#92400e" }}>
+          Confirmation needed — {action.tool}
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          onClick={onConfirm}
+          style={{
+            border: "none",
+            borderRadius: 8,
+            background: "#10b981",
+            color: "white",
+            fontSize: "0.76rem",
+            fontWeight: 600,
+            padding: "0.35rem 0.9rem",
+            cursor: "pointer",
+          }}
+        >
+          <i className="bi bi-check-lg me-1" />
+          Confirm
+        </button>
+        <button
+          onClick={onCancel}
+          style={{
+            border: "1px solid #e2e8f0",
+            borderRadius: 8,
+            background: "white",
+            color: "#475569",
+            fontSize: "0.76rem",
+            fontWeight: 600,
+            padding: "0.35rem 0.9rem",
+            cursor: "pointer",
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          onClick={() => setShowArgs((v) => !v)}
+          style={{
+            border: "none",
+            background: "transparent",
+            color: "#92400e",
+            fontSize: "0.7rem",
+            marginLeft: "auto",
+            cursor: "pointer",
+          }}
+        >
+          {showArgs ? "Hide" : "Show"} raw arguments
+        </button>
+      </div>
+      {showArgs && (
+        <div style={{ fontSize: "0.72rem", fontFamily: "monospace" }}>
+          <JsonTree data={action.args} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MessageBubble({
+  msg,
+  onConfirmAction,
+  onCancelAction,
+}: {
+  msg: PodioChatMessage;
+  onConfirmAction?: () => void;
+  onCancelAction?: () => void;
+}) {
   const isUser = msg.role === "user";
   return (
     <div className={`d-flex ${isUser ? "justify-content-end" : "justify-content-start"}`}>
@@ -407,6 +498,9 @@ function MessageBubble({ msg }: { msg: PodioChatMessage }) {
             msg.error ? "Something went wrong." : ""
           )}
         </div>
+        {msg.pendingAction && onConfirmAction && onCancelAction && (
+          <PendingActionCard action={msg.pendingAction} onConfirm={onConfirmAction} onCancel={onCancelAction} />
+        )}
         {msg.steps && msg.steps.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <span style={{ fontSize: "0.68rem", color: "#94a3b8", fontWeight: 600, paddingLeft: 2 }}>
@@ -1133,7 +1227,7 @@ export default function PodioAgentPage() {
       if (res.success) {
         setMessages((prev) => [
           ...prev,
-          { role: "assistant", content: res.reply, steps: res.steps },
+          { role: "assistant", content: res.reply, steps: res.steps, pendingAction: res.pending_action ?? undefined },
         ]);
         // Auto-trigger browser download for any successful download_file tool step.
         for (const step of res.steps ?? []) {
@@ -1158,6 +1252,51 @@ export default function PodioAgentPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function confirmPendingAction(index: number) {
+    const proposal = messages[index];
+    if (!proposal?.pendingAction || loading) return;
+    const pendingAction = proposal.pendingAction;
+    // Clear the buttons on the proposal message immediately so a double-click can't
+    // fire the confirmed write twice while the request is in flight.
+    setMessages((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], pendingAction: undefined };
+      return copy;
+    });
+    setLoading(true);
+    try {
+      const history = messages.slice(0, index + 1).map((m) => ({ role: m.role, content: m.content }));
+      const res = await runPodioAgent("Yes, proceed.", history, currentId, pendingAction);
+      if (res.success) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: res.reply, steps: res.steps, pendingAction: res.pending_action ?? undefined },
+        ]);
+      } else {
+        toast.error(res.error ?? "Agent failed");
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: res.error ?? "The agent failed to respond.", error: true },
+        ]);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Request failed";
+      toast.error(msg);
+      setMessages((prev) => [...prev, { role: "assistant", content: msg, error: true }]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function cancelPendingAction(index: number) {
+    setMessages((prev) => {
+      const copy = [...prev];
+      if (copy[index]) copy[index] = { ...copy[index], pendingAction: undefined };
+      copy.push({ role: "assistant", content: "Cancelled — no change was made in Podio." });
+      return copy;
+    });
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -1324,7 +1463,12 @@ export default function PodioAgentPage() {
             )}
 
             {messages.map((m, i) => (
-              <MessageBubble key={i} msg={m} />
+              <MessageBubble
+                key={i}
+                msg={m}
+                onConfirmAction={() => confirmPendingAction(i)}
+                onCancelAction={() => cancelPendingAction(i)}
+              />
             ))}
 
             {loading && (

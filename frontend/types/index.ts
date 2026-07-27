@@ -147,12 +147,18 @@ export interface PodioAgentStep {
   result: unknown;
 }
 
+export interface PodioPendingAction {
+  tool: string;
+  args: Record<string, unknown>;
+}
+
 export interface PodioAgentResponse {
   success: boolean;
   reply: string;
   steps: PodioAgentStep[];
   model?: string;
   error?: string;
+  pending_action?: PodioPendingAction | null;
 }
 
 export interface PodioChatMessage {
@@ -160,6 +166,7 @@ export interface PodioChatMessage {
   content: string;
   steps?: PodioAgentStep[];
   error?: boolean;
+  pendingAction?: PodioPendingAction | null;
 }
 
 export interface PodioChatSessionSummary {
