@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
@@ -79,13 +80,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # --- Startup ---
     log.info("platform_starting", version="0.1.0")
 
-    # Database
-    try:
-        from app.storage.db import init_db
-        await init_db()
-        log.info("database_connected")
-    except Exception as exc:  # noqa: BLE001
-        log.error("database_connect_failed", error=str(exc))
+    # Database — retry with backoff. In a fresh Docker Compose stack the
+    # postgres container can still be starting when this runs; a single
+    # failed attempt used to be swallowed silently, leaving the app "up"
+    # but with no tables and no admin user, and login failing with no
+    # obvious cause. After exhausting retries we re-raise so startup fails
+    # loudly and the container's restart policy retries the whole process.
+    db_max_attempts = 5
+    for db_attempt in range(1, db_max_attempts + 1):
+        try:
+            from app.storage.db import init_db
+            await init_db()
+            log.info("database_connected", attempt=db_attempt)
+            break
+        except Exception as exc:  # noqa: BLE001
+            if db_attempt == db_max_attempts:
+                log.error(
+                    "database_connect_failed",
+                    error=str(exc),
+                    attempts=db_max_attempts,
+                )
+                raise
+            delay = min(2**db_attempt, 16)
+            log.warning(
+                "database_connect_retry",
+                error=str(exc),
+                attempt=db_attempt,
+                max_attempts=db_max_attempts,
+                retry_in_seconds=delay,
+            )
+            await asyncio.sleep(delay)
 
     # Redis
     redis_client = None
