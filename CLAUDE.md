@@ -68,6 +68,7 @@ app/
 │   ├── podio_rest.py            ← Custom Podio REST client (write ops, files, flows, etc.)
 │   ├── podio_files_client.py    ← In-process adapter → podio_files FastMCP server
 │   ├── podio_agent.py           ← Podio agent loop: LLM + Podio tools → reply
+│   ├── request_origin.py        ← Derives Podio OAuth redirect URLs from the request
 │   ├── mycase_rest.py           ← MyCase REST client (46 GET methods + 7 deterministic tools)
 │   ├── mycase_utbms.py          ← Static UTBMS/LEDES billing-code reference table
 │   ├── mycase_client.py         ← In-process adapter → mycase FastMCP server
@@ -98,7 +99,7 @@ frontend/
 │       ├── settings/page.tsx    ← Credentials UI (integrations + opt-in LLM providers)
 │       └── crm/, dev/, mgmt/, rag/, admin/, prompts/  ← other team-tool pages
 ├── components/Sidebar.tsx, Markdown.tsx, JsonTree.tsx
-└── lib/api.ts, recordTable.ts, auth.ts
+└── lib/api.ts, recordTable.ts, auth.ts, crypto.ts (Web Crypto + pure-JS fallback, see below)
 ```
 
 ---
@@ -123,6 +124,12 @@ OLLAMA_TIMEOUT=300, OLLAMA_NUM_CTX=8192       # must be >2048 for prompt + tool 
 PGVECTOR_ENABLED=false                        # true only if the pgvector extension is installed
 DEV_TOKENS=bd_team:bd-secret-token-123,...
 ADMIN_EMAIL=admin@syndrix.local, ADMIN_PASSWORD=changeme
+CORS_ORIGINS=                                 # comma-separated extra allowed frontend origins —
+                                               # localhost:3000 is always allowed regardless. MUST
+                                               # be set to the deployed frontend's real origin (e.g.
+                                               # http://<host>:3100) on any hosted deployment, or
+                                               # every API call 400s on preflight ("Failed to fetch"
+                                               # in the browser) — see Hosted Deployment Notes below.
 PODIO_CLIENT_ID=, PODIO_CLIENT_SECRET=        # shared by hosted-MCP OAuth and REST OAuth
 GHL_API_KEY=, SLACK_BOT_TOKEN=, GITHUB_TOKEN=, GITHUB_ORG=, SMTP_HOST/PORT/USER/PASSWORD/FROM=
 LANGFUSE_PUBLIC_KEY=, LANGFUSE_SECRET_KEY=, LANGFUSE_BASE_URL=  # see Observability section
@@ -148,6 +155,17 @@ celery -A app.workers.jobs worker --loglevel=info # optional
 
 ---
 
+## Hosted Deployment Notes
+
+The app was built and tested purely on `localhost` for a long time; deploying to a real server (built via `frontend.Dockerfile` + a backend Dockerfile, both living only on the deploy server — not in this repo) surfaced several localhost-only assumptions baked into the code. All now fixed, but worth knowing if this is ever redeployed somewhere new:
+
+- **CORS is not open by default.** `CORS_ORIGINS` (backend `.env`) must include the deployed frontend's real origin (e.g. `http://<host>:3100`) — `localhost:3000` is always allowed but nothing else is, unless set. Symptom when missing: login (and everything else) fails with a generic browser "Failed to fetch," and the real reason (a 400 on the CORS preflight `OPTIONS` request) only shows up in DevTools' Network tab, never in the caught JS error.
+- **`crypto.subtle` and `crypto.randomUUID()` need a "secure context"** — HTTPS, or the browser's special-cased `http://localhost`. A plain-HTTP deployment on a raw IP (no domain, no TLS) is neither, so both are `undefined` there. This broke two things independently: `frontend/lib/crypto.ts` (client-side API-key encryption for Settings) and `makeSessionId()` in both `podio-agent/page.tsx`/`mycase-agent/page.tsx` (chat history session ids). Both now fall back to `crypto.getRandomValues()` — which has **no** secure-context restriction — instead: `crypto.ts` via `@noble/ciphers`/`@noble/hashes` (verified byte-identical output to `crypto.subtle` for the same key/nonce/plaintext), `makeSessionId()` via a hand-built UUID v4. Without the fix, chat history silently never saved: the id fell back to a non-UUID string, the backend's `_parse_session_id` 400s on it, and the save's `.catch()` swallowed the error completely — the chat kept working in memory the whole time, masking the bug. If this ever needs revisiting: the real long-term fix is HTTPS (even a self-signed cert on the raw IP works — the "secure context" check is scheme-based, not CA-trust-based — Let's Encrypt needs a domain, a self-signed cert doesn't).
+- **Podio OAuth redirect URLs used to be hardcoded to `localhost`, with no Settings UI field and no whitelisted setting key to override them** — silently broken on any non-local deployment. Fixed by deriving them from the request itself (see `request_origin.py`, documented below in the Podio Agent section) instead of requiring manual configuration.
+- **A slow/large agent response can hit a timeout that has nothing to do with this app.** A MyCase Agent "list all X" query against real firm data can legitimately take tens of seconds and return a multi-MB response; over a mobile network this can get killed by the carrier's own transparent proxy with a 504 before the backend finishes (confirmed live: the identical request succeeded on retry, `Remote Address` in DevTools showed a completely different IP than the server itself — a strong sign of an in-path mobile proxy, not a server bug). Worth ruling out with a same-request retry on WiFi/desktop before assuming it's a backend issue.
+
+---
+
 ## ⭐ Podio Agent
 
 **What it is:** a chat page (`/dashboard/podio-agent`) where natural language drives Podio actions — reads, writes, files, flows, tasks, calendar, everything. Two separate Podio connections run in parallel, because `client_credentials` OAuth (authenticates only the API key, not a user) 403s on every real call:
@@ -155,7 +173,9 @@ celery -A app.workers.jobs worker --loglevel=info # optional
 1. **Hosted MCP** (`mcp.podio.com`) — reads/search only, OAuth PKCE via "Connect Podio".
 2. **Custom REST layer** (`podio_rest.py` + `mcp_servers/podio_files.py`) — writes, files, flows, webhooks, tasks, workspaces, conversations, calendar. Separate OAuth via "Connect Files". REST tools override same-named hosted tools when connected.
 
-**Setup:** Settings → Podio (MCP): Client ID/Secret. Connect Podio → Connect Files → pick workspace → pick a **strong** model (Groq 70B / Mistral Large / Gemini / Claude — `llama3.2` 3B is too weak for multi-step tool calling, `llama3` doesn't support tools at all).
+**Setup:** Settings → Podio: one OAuth Client ID/Secret pair (generated at `podio.com/settings/api`) powers both connections — `podio_rest.py`'s `_client_id()`/`_client_secret()` fall back to the MCP credentials whenever the (optional, no-longer-shown-in-UI) `podio_rest_client_id/secret` keys are unset. Connect Podio → Connect Files → pick workspace → pick a **strong** model (Groq 70B / Mistral Large / Gemini / Claude — `llama3.2` 3B is too weak for multi-step tool calling, `llama3` doesn't support tools at all).
+
+**OAuth redirect URLs are auto-detected, not configured.** `app/services/request_origin.py` derives both the backend callback (`redirect_uri`, from the request's Host/X-Forwarded-Host) and the post-connect landing page (`frontend_redirect`, from Origin/Referer) per-request, so Connect works unmodified on localhost, a hosted IP, or a future domain — nothing to fill in in Settings for this (the old `podio_mcp_redirect_uri`/`podio_rest_redirect_uri`/`podio_mcp_frontend_redirect` setting keys still exist as an optional override for an exotic reverse-proxy setup, just no longer required or shown in the UI). What's still manual, because it's enforced by Podio itself, not us: **Podio ties one API key to one domain** — the key's Redirect URL (registered at `podio.com/settings/api`) must match whatever domain you're actually running on. A key registered for `localhost` will not authorize a hosted deployment or vice versa; running both simultaneously needs two separate keys, one per domain (confirmed live: a single key's Redirect URL, once pointed at a domain, works for BOTH the MCP and REST callback paths on that same domain — validation appears to be domain-level, not exact-path).
 
 **Agent loop (`podio_agent.py`):** merges tools from both connections (dedup by name); **write-gating** hides write tools unless the message shows write intent (`_wants_write`); Ollama models get a keyword-priority-trimmed tool list (cap 18); loops up to 12 steps calling `model_gateway.chat()`. Heavy hardening layered in over many sessions: recovers tool calls a weak model emits as garbled/glued text or a self-describing `{"name":...,"parameters":...}` JSON envelope instead of a real function call; strips hallucinated content that rides along with a real tool call; guards against fabricated/wrong-but-plausible object IDs (`_guard_object_ids`, substitutes the real id when exactly one candidate was seen this turn); an honesty guard rejects a "success"/"here's the table" claim when the matching tool never actually succeeded, forcing a real retry or an honest failure instead.
 
@@ -173,7 +193,7 @@ celery -A app.workers.jobs worker --loglevel=info # optional
 - `task/total/` returns time-bucket counts only (no `completed`/`app_id` filter); task ranking (`/task/{id}/rank/`) is HTTP 410 Gone (removed by Podio).
 - The activity stream (`GET /stream/...`) — not `get_items` sorted by `last_edit_on` — is the correct source for "what changed / recently updated," since comments/files don't bump `last_edit_on`.
 
-**Settings keys:** `podio_mcp_client_id/secret`, `podio_rest_client_id/secret` (optional, falls back to mcp_*), OAuth tokens (auto-managed), `podio_mcp_space_id`, `agent_model`.
+**Settings keys:** `podio_mcp_client_id/secret` (the one pair shown in the UI), `podio_rest_client_id/secret` (optional, falls back to mcp_*, no longer shown in the UI), `podio_mcp_redirect_uri`/`podio_rest_redirect_uri`/`podio_mcp_frontend_redirect` (optional overrides — normally auto-detected, see above), OAuth tokens (auto-managed), `podio_mcp_space_id`, `agent_model`.
 
 ---
 
@@ -278,3 +298,8 @@ Both agents are traced end-to-end via [Langfuse Cloud](https://cloud.langfuse.co
 **39:** Implemented Langfuse Cloud observability for both agents (LLM/tool tracing, session grouping, guard results as `reply_quality` scores, regression datasets seeded from this session's fixed bugs). Root-caused two real connectivity dead-ends before it worked: a blank-but-present API key still attempts a network call and 401s (must set `LANGFUSE_TRACING_ENABLED=false` explicitly), and Langfuse Cloud is region-sharded (EU/US/Japan) — a key from the wrong region 401s identically to a genuinely bad key.
 **40:** Restricted both agents to firm-data-only answers — they were previously happy to answer general-knowledge/off-topic questions (e.g. explaining "agentic AI") using training knowledge instead of refusing. Added a DATA VS. INSTRUCTIONS rule to both system prompts so text inside tool results (case notes, item comments) is never treated as a command, even if phrased like one.
 **41:** Added a confirm-before-write UI for Podio's destructive actions (writes used to execute immediately on detected intent — this is a deliberate safety change), an optional off-by-default LLM-as-judge reply evaluator, a zero-cost opening-greeting routing shortcut for both agents, and a write-only long-term-memory log of guard-corrected replies.
+**42:** First real hosted-deployment pass (Docker build to a VPS, no domain) surfaced a run of localhost-only assumptions baked in since local-only development. Fixed a frontend TypeScript build failure blocking the Docker image entirely (`SkeletonTable` missing its `cols` prop; four `unknown && <jsx/>` conditionals in `ContactResult`/`NoteResult` that TS can't narrow). Also audited `requirements.txt` against actual imports and added `cryptography` (used directly, not just via `python-jose`'s extra) and `pytest`/`pytest-asyncio` (tests existed but weren't installable from this file alone).
+**43:** Fixed backend CORS hardcoded to `http://localhost:3000` — added a `CORS_ORIGINS` env var (`get_cors_origins()` in `config.py`) instead, since the deployed frontend's origin was silently rejected on every preflight (surfaced to users as a generic "Failed to fetch").
+**44:** Fixed two independent breakages caused by the same root cause — `crypto.subtle`/`crypto.randomUUID()` require a secure context (HTTPS or `localhost`), which a plain-HTTP hosted-IP deployment isn't: (1) Settings API-key encryption (`frontend/lib/crypto.ts`) threw outright; fixed with a `@noble/ciphers`/`@noble/hashes` pure-JS fallback, verified byte-identical to the Web Crypto output. (2) Chat history silently never saved on either agent — `makeSessionId()`'s fallback produced a non-UUID id the backend rejected with a 400, swallowed by a silent `.catch()`; fixed by building a real UUID v4 from `crypto.getRandomValues()` instead (no secure-context restriction), and the two previously-silent catches now at least `console.error` so a future failure isn't invisible again.
+**45:** Overhauled Podio's OAuth redirect handling — `podio_mcp_redirect_uri`/`podio_rest_redirect_uri`/`podio_mcp_frontend_redirect` were hardcoded to `localhost` with no Settings UI field and no whitelisted setting key, so there was no way to fix a hosted deployment short of a raw DB write. Replaced with `request_origin.py`, deriving all three from the incoming request (Host/X-Forwarded-Host, Origin/Referer) so Connect works unmodified on any host; the old keys remain as optional overrides only. Also simplified Settings → Podio down to one Client ID/Secret pair (REST already fell back to the MCP credentials when unset — the separate REST fields just added confusion) after confirming live that Podio's redirect_uri validation is domain-level, not exact-path.
+**46:** Diagnosed a hosted-only MyCase Agent "Failed to fetch" via live DevTools network capture — not a backend bug: `aggregate_cases()` with no `limit` legitimately returns every matching case in full (2.5MB for one real "list all open cases" request), and a mobile carrier's transparent proxy (visible as a `Remote Address` completely different from the server's own IP) 504'd the first attempt before the backend finished; the identical request succeeded on retry. Documented as a Hosted Deployment Note rather than changed, pending a decision on whether broad unbounded queries should ever be capped by default (tension with the project's long-standing "never silently truncate" principle).
