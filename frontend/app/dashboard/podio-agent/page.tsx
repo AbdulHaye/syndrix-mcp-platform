@@ -29,6 +29,12 @@ import Markdown from "@/components/Markdown";
 import JsonTree from "@/components/JsonTree";
 import type { PodioChatMessage, PodioAgentStep, PodioChatSessionSummary, PodioPendingAction } from "@/types";
 
+// Same origin lib/api.ts resolves to. The download <a> below needs a real URL
+// for right-click "Save link as" / middle-click, which never reach its onClick
+// handler — a hardcoded one is invisible in local dev but breaks on any
+// deployment, and an http:// one is blocked as mixed content on an HTTPS page.
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 const TOOL_META: Record<string, { label: string; icon: string; color: string }> = {
   // Podio MCP tool names
   get_items:                  { label: "Get Items",          icon: "bi-list-ul",        color: "#6366f1" },
@@ -284,7 +290,7 @@ function StepCard({ step }: { step: PodioAgentStep }) {
                       )}
                     </div>
                     <a
-                      href={`http://localhost:8000/integrations/podio-files/download/${r.file_id}`}
+                      href={`${API_BASE}/integrations/podio-files/download/${r.file_id}`}
                       download={r.filename ?? undefined}
                       onClick={async (e) => {
                         e.preventDefault();

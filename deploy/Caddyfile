@@ -1,0 +1,49 @@
+# Syndrix — reverse proxy + automatic HTTPS
+#
+# Why this exists: Podio's OAuth server (mcp.podio.com) refuses a plain-HTTP
+# callback on a raw IP. It accepts HTTPS, http://localhost or http://127.0.0.1,
+# and nothing else — there is no setting to override it, and its own suggested
+# workaround (POST /oauth/register) rejects the same URI. Terminating TLS here
+# is what makes "Connect Podio" and "Connect Files" work on a hosted box.
+#
+# No application code depends on this file. Caddy sets X-Forwarded-Proto and
+# X-Forwarded-Host by default — and ignores any spoofed incoming values — which
+# is exactly what app/services/request_origin.py reads to derive the OAuth
+# callback URLs per request. uvicorn does NOT need --proxy-headers.
+
+{
+	# Let's Encrypt expiry/problem notices. Change to whoever should receive them.
+	email iqbalamjad36@gmail.com
+}
+
+# Frontend (Next.js), published on :3100
+app.195.35.14.71.nip.io {
+	reverse_proxy 127.0.0.1:3100
+}
+
+# Backend (FastAPI), published on :8100
+#
+# This hostname is what goes in the Podio API key's Domain field at
+# podio.com/settings/api — the REST OAuth callback is a backend route
+# (/integrations/podio-files/callback), so it resolves against THIS host.
+# The hosted-MCP connection does not care what that field says: its callback
+# lands on https://mcp.podio.com/oauth/callback, a domain Podio trusts.
+api.195.35.14.71.nip.io {
+	reverse_proxy 127.0.0.1:8100
+}
+
+# ── Deliberately NOT configured ──────────────────────────────────────────────
+#
+# No response timeouts and no request-body cap. Both are absent from Caddy by
+# default, and both should stay that way here:
+#
+#   * A MyCase Agent "list all X" query legitimately runs for tens of seconds
+#     and returns multi-MB JSON (~2.5 MB observed on a real "list all open
+#     cases"). A write/read timeout would kill exactly that, reproducing the
+#     504 already chased down once and traced to a mobile carrier proxy.
+#   * Podio file upload accepts up to 25 MB (_MAX_UPLOAD_BYTES in
+#     app/api/podio_files.py). A body limit below that silently breaks uploads.
+#
+# If Caddy itself is ever run as a container rather than on the host, replace
+# 127.0.0.1:PORT with the compose service names (e.g. frontend:3000,
+# backend:8000) — 127.0.0.1 inside a container points at the container itself.
