@@ -26,21 +26,37 @@ interface ServiceGroup {
 const GROUPS: ServiceGroup[] = [
   {
     id: "podio",
-    label: "Podio (MCP)",
+    label: "Podio — MCP (Connect Podio)",
     icon: "bi-kanban-fill",
     color: "#10b981",
     description:
-      "Connects to Podio via OAuth — one Client ID/Secret pair powers both the hosted-MCP connection " +
-      "(Connect Podio, reads/search) and the REST connection (Connect Files, writes/files/flows). " +
-      "Enter it, Save, then click Connect Podio and Connect Files on the Podio Agent page to log in. " +
-      "The callback/redirect URLs are detected automatically from whatever host you're on (localhost, a hosted IP, " +
-      "or a domain) — nothing to fill in here for that. The one thing you still register on Podio's own site " +
-      "(podio.com/settings/api, on this Client ID's API key) is its Redirect URL, which must match this server's " +
-      "address — Podio ties one API key to one domain, so a key registered for localhost won't authorize from a " +
-      "hosted deployment or vice versa; generate a separate key per environment if you need both working at once.",
+      "Powers the hosted-MCP connection (\"Connect Podio\" on the Podio Agent page — reads/search). " +
+      "This needs its OWN Podio API key, separate from the Files/REST one below — Podio's hosted MCP " +
+      "service (mcp.podio.com) requires the key's Redirect URL, registered at podio.com/settings/api, " +
+      "to be set to exactly https://mcp.podio.com — not this server's domain. Enter that key's Client " +
+      "ID/Secret here, Save, then click Connect Podio on the Podio Agent page to log in.",
     fields: [
-      { key: "podio_mcp_client_id",     label: "OAuth Client ID",     placeholder: "your-podio-client-id" },
-      { key: "podio_mcp_client_secret", label: "OAuth Client Secret", placeholder: "your-podio-client-secret", secret: true },
+      { key: "podio_mcp_client_id",     label: "OAuth Client ID",     placeholder: "your-podio-mcp-client-id" },
+      { key: "podio_mcp_client_secret", label: "OAuth Client Secret", placeholder: "your-podio-mcp-client-secret", secret: true },
+    ],
+  },
+  {
+    id: "podio_files",
+    label: "Podio — Files (Connect Files)",
+    icon: "bi-folder2-open",
+    color: "#059669",
+    description:
+      "Powers the REST connection (\"Connect Files\" on the Podio Agent page — writes/files/flows). " +
+      "Needs its own Podio API key too, separate from the MCP one above. Register this key's Redirect " +
+      "URL at podio.com/settings/api to this server's own domain (not mcp.podio.com) — Podio ties one " +
+      "API key to one domain, so a key registered for localhost won't authorize a hosted deployment or " +
+      "vice versa. The callback URL itself is detected automatically from whatever host you're on — " +
+      "nothing else to fill in here for that. If left blank, this falls back to the MCP key above, but " +
+      "since the two keys now need different Redirect URLs registered with Podio, that fallback will " +
+      "only work if you deliberately want both connections sharing one key on the same domain.",
+    fields: [
+      { key: "podio_rest_client_id",     label: "OAuth Client ID",     placeholder: "your-podio-files-client-id" },
+      { key: "podio_rest_client_secret", label: "OAuth Client Secret", placeholder: "your-podio-files-client-secret", secret: true },
     ],
   },
   {
