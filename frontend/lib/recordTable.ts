@@ -60,11 +60,24 @@ export function deriveColumns(items: RecordRow[]): string[] {
   return columns;
 }
 
+// Excel/Sheets execute any cell whose text begins with = + - @ (or their
+// full-width variants), so a MyCase record containing e.g. `=HYPERLINK(...)` in a
+// case name would run the moment someone opened the exported CSV — OWASP calls
+// this CSV/formula injection (CWE-1236). Every value here originates from
+// client-written MyCase data, so it is all untrusted. A leading apostrophe makes
+// spreadsheet apps treat the rest as literal text.
+const FORMULA_LEAD = /^[=+\-@＝＋－＠\t\r]/;
+
+function neutralizeFormula(value: string): string {
+  return FORMULA_LEAD.test(value) ? `'${value}` : value;
+}
+
 function csvEscape(value: string): string {
-  if (/[",\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
+  const safe = neutralizeFormula(value);
+  if (/[",\n]/.test(safe)) {
+    return `"${safe.replace(/"/g, '""')}"`;
   }
-  return value;
+  return safe;
 }
 
 export function itemsToCsv(items: RecordRow[], columns: string[]): string {

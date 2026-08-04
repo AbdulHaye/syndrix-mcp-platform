@@ -161,6 +161,62 @@ async def get_client_message_threads(client_id: int) -> dict:
     return await _call("get_client_message_threads", client_id=client_id)
 
 
+@mycase_mcp.tool(
+    name="aggregate_clients",
+    description=(
+        "Build a filtered, grouped, COUNTED contact (client) report — the client equivalent of "
+        "aggregate_cases. Use this for 'contacts created this month/this week/on X' or any "
+        "request that filters/groups/counts clients — do NOT call get_clients and eyeball-"
+        "filter/count the results yourself.\n\n"
+        "created_after/created_before (YYYY-MM-DD, inclusive): filter on the client's own "
+        "created_at — MyCase has no server-side filter for this.\n"
+        "group_by: any field name present on a client record (e.g. 'status'). "
+        "min_group_size/max_group_size filter on how many CLIENTS fall in each group (e.g. "
+        "group_by='email', min_group_size=2 for shared email addresses).\n"
+        "DO NOT use this for 'clients who have more than one CASE' — a client record carries no "
+        "case count, so there is nothing here to filter on. That is a cases question: call "
+        "aggregate_cases(group_by='client_name', min_group_size=2). Grouping clients by 'id' is "
+        "always wrong (unique per client, so every group has exactly one row) and is rejected.\n\n"
+        "NOTE: MyCase's /clients endpoint has been observed to time out (HTTP 504) on a large "
+        "real account even at page_size=1 — this may be slow or occasionally fail; report the "
+        "real error plainly if it does rather than claiming zero contacts exist.\n\n"
+        "Returns total_clients, a `groups` array ([{name, count}], sorted highest-count-first) "
+        "when group_by is given, and the flat `items` array."
+    ),
+)
+async def aggregate_clients(
+    created_after: str | None = None,
+    created_before: str | None = None,
+    group_by: str | None = None,
+    min_group_size: int | None = None,
+    max_group_size: int | None = None,
+    limit: int | None = None,
+) -> dict:
+    return await _call(
+        "aggregate_clients", created_after=created_after, created_before=created_before,
+        group_by=group_by, min_group_size=min_group_size, max_group_size=max_group_size,
+        limit=limit,
+    )
+
+
+@mycase_mcp.tool(
+    name="find_duplicate_clients",
+    description=(
+        "Firm-wide duplicate-CONTACT scan by email AND by phone number — use this for 'find "
+        "duplicate contacts', 'clients with the same email/phone'. MyCase has no server-side "
+        "'find duplicates' endpoint, so this walks every client once and groups by normalized "
+        "email / normalized phone in Python, returning ONLY groups with more than one client — "
+        "do NOT try to spot duplicates yourself from a raw get_clients list, that's unreliable "
+        "at any real firm size.\n\n"
+        "Returns duplicate_email_groups/duplicate_phone_groups (counts) plus by_email/by_phone "
+        "arrays, each entry listing the matching clients (id, name, email, phone numbers). Same "
+        "504-risk note as aggregate_clients applies to the underlying /clients walk."
+    ),
+)
+async def find_duplicate_clients() -> dict:
+    return await _call("find_duplicate_clients")
+
+
 # ── Companies ────────────────────────────────────────────────────────────────────
 
 @mycase_mcp.tool(name="get_companies", description="Get all firm companies (organization contacts) viewable by the authorized user. Filter by name, email, or phone number to search.")
@@ -335,6 +391,13 @@ async def get_invoices_by_date(
         "first), or 'invoice_date' (DESCENDING — most recent first).\n"
         "limit: caps items to the first N sorted/filtered rows for a 'top N' request — "
         "total_invoices still reports the TRUE full-match count regardless of limit.\n\n"
+        "group_by (optional): 'client_name'/'client', 'assigned_attorney'/'lead_attorney', or "
+        "'status' — use this for 'unpaid invoices grouped by client' or 'invoices by assigned "
+        "attorney'. An invoice itself has no client/attorney field, only a case link — this "
+        "resolves both via the linked case (same join aggregate_cases uses), NOT a guess. Adds "
+        "a top-level `groups` array ([{name, count, total_balance_due}], sorted by "
+        "total_balance_due descending — read this directly for the breakdown) and a "
+        "`group_name` column on every row.\n\n"
         "Each row includes a computed balance_due column (total_amount - paid_amount, already "
         "numeric even though this account sometimes returns those as strings) — present it, "
         "don't recompute it."
@@ -348,6 +411,9 @@ async def aggregate_invoices(
     invoice_date_before: str | None = None,
     due_date_after: str | None = None,
     due_date_before: str | None = None,
+    group_by: str | None = None,
+    min_group_size: int | None = None,
+    max_group_size: int | None = None,
     sort_by: str = "balance_due",
     limit: int | None = None,
     only_allowed_online_payments: bool | None = None,
@@ -355,7 +421,8 @@ async def aggregate_invoices(
     return await _call(
         "aggregate_invoices", status=status, paid=paid, min_balance_due=min_balance_due,
         invoice_date_after=invoice_date_after, invoice_date_before=invoice_date_before,
-        due_date_after=due_date_after, due_date_before=due_date_before,
+        due_date_after=due_date_after, due_date_before=due_date_before, group_by=group_by,
+        min_group_size=min_group_size, max_group_size=max_group_size,
         sort_by=sort_by, limit=limit, only_allowed_online_payments=only_allowed_online_payments,
     )
 
@@ -363,6 +430,60 @@ async def aggregate_invoices(
 @mycase_mcp.tool(name="get_invoice_payments", description="Get all firm invoice payments viewable by the authorized user. Filter by payable_id (the invoice's id) or status (e.g. 'success', 'pending', 'failure').")
 async def get_invoice_payments(payable_id: str | None = None, status: str | None = None, page_size: int | None = None, page_token: str | None = None) -> dict:
     return await _call("get_invoice_payments", payable_id=payable_id, status=status, page_size=page_size, page_token=page_token)
+
+
+@mycase_mcp.tool(
+    name="aggregate_payments",
+    description=(
+        "Build a filtered, grouped, COUNTED/SUMMED payment report — use this for 'all payments "
+        "received', 'payments by attorney/client', or any request about invoice PAYMENTS "
+        "(actual money received) rather than invoices themselves. get_invoice_payments with no "
+        "filters already returns every firm payment (confirmed live: 9,314 records in this "
+        "account) but that raw list is too large to eyeball-count/sum yourself — this tool walks "
+        "every page and computes the totals in code.\n\n"
+        "status: exact match on MyCase's own payment status ('success', 'pending', 'failure').\n"
+        "case_id: pass this for 'payment history for case X' — payments already carry "
+        "`case: {id}` directly, no join needed (get_case_payments is a shortcut for exactly this).\n"
+        "date_after/date_before (YYYY-MM-DD, inclusive): filter on the payment's own date.\n"
+        "group_by: 'attorney', 'client', 'case', or 'status' (default) — e.g. group_by='attorney' "
+        "for 'payments by assigned attorney' (each payment already carries its own attorney "
+        "directly, the most direct source for this). aggregate_invoices(group_by='assigned_"
+        "attorney') also answers an attorney breakdown, resolved via each invoice's linked case — "
+        "use whichever matches what the user actually asked about (payments received vs. "
+        "invoice/balance amounts); either way, never guess an attorney/client link yourself.\n\n"
+        "Returns total_payments, total_amount (sum of amount across every surviving payment), "
+        "and a `groups` array ([{name, count, total_amount}], sorted by total_amount "
+        "descending — read this directly for a breakdown, don't re-sum items yourself), plus "
+        "the flat `items` array."
+    ),
+)
+async def aggregate_payments(
+    status: str | None = None,
+    case_id: int | None = None,
+    date_after: str | None = None,
+    date_before: str | None = None,
+    group_by: str | None = None,
+    min_group_size: int | None = None,
+    max_group_size: int | None = None,
+    limit: int | None = None,
+) -> dict:
+    return await _call(
+        "aggregate_payments", status=status, case_id=case_id, date_after=date_after,
+        date_before=date_before, group_by=group_by,
+        min_group_size=min_group_size, max_group_size=max_group_size, limit=limit,
+    )
+
+
+@mycase_mcp.tool(
+    name="get_case_payments",
+    description=(
+        "Payment history for ONE case, by its id — use this for 'payment history for case X'/"
+        "'payments received on case X'. Do NOT try to answer this via get_case_invoices or by "
+        "fabricating a tool call — this is the real, exact tool for it."
+    ),
+)
+async def get_case_payments(case_id: int) -> dict:
+    return await _call("get_case_payments", case_id=case_id)
 
 
 # ── Leads ────────────────────────────────────────────────────────────────────────
@@ -385,6 +506,50 @@ async def get_leads(
 @mycase_mcp.tool(name="get_lead", description="Get one specific lead by its id — full detail incl. status, approved flag, referral source, and referred_by.")
 async def get_lead(lead_id: int) -> dict:
     return await _call("get_lead", lead_id=lead_id)
+
+
+@mycase_mcp.tool(
+    name="aggregate_leads",
+    description=(
+        "Build a filtered, grouped, COUNTED lead (prospect) report — the lead equivalent of "
+        "aggregate_cases. Use this for ANY request that filters/groups/counts leads — do NOT "
+        "call get_leads and eyeball-filter/count the results yourself, this tool does it exactly "
+        "in code and walks every matching page internally.\n\n"
+        "status: EXACT match, case-insensitive — a lead's status is a literal firm-defined "
+        "string (confirmed real values in this account: 'NEED FOLLOW-UP', 'New Lead', 'Need "
+        "consultation', 'UNDECIDED', 'NOT FOUND YET'). Use status='NEED FOLLOW-UP' for "
+        "'prospects/leads that need follow-up'. Do NOT substring-match — 'NEED FOLLOW-UP' and "
+        "'New Lead' share no useful substring.\n"
+        "created_after/created_before (YYYY-MM-DD, inclusive): filter on the lead's own "
+        "created_at — MyCase has no server-side filter for this.\n"
+        "assigned_attorney: a lead has no attorney of its own — once converted it links to a "
+        "case (`case: {id}`), and that case may have a lead_lawyer-flagged staff member, same "
+        "convention as aggregate_cases. Pass assigned_attorney='' for 'prospects with NO "
+        "assigned attorney' (covers leads with no linked case at all, or a linked case with no "
+        "lead_lawyer set), or a substring to match one attorney's name.\n"
+        "group_by: 'status' (default) or 'assigned_attorney'/'lead_attorney'.\n\n"
+        "Returns the same shape as aggregate_cases: total_leads, total_groups, group_by_field, "
+        "a `groups` array ([{name, count}], sorted highest-count-first — read this directly for "
+        "any breakdown/'which status has the most' question), and a flat `items` array (each "
+        "lead's full fields plus resolved assigned_attorney, group_name, lead_count). "
+        "limit caps how many rows come back in items without affecting the true totals/groups."
+    ),
+)
+async def aggregate_leads(
+    status: str | None = None,
+    created_after: str | None = None,
+    created_before: str | None = None,
+    assigned_attorney: str | None = None,
+    group_by: str | None = None,
+    min_group_size: int | None = None,
+    max_group_size: int | None = None,
+    limit: int | None = None,
+) -> dict:
+    return await _call(
+        "aggregate_leads", status=status, created_after=created_after, created_before=created_before,
+        assigned_attorney=assigned_attorney, group_by=group_by,
+        min_group_size=min_group_size, max_group_size=max_group_size, limit=limit,
+    )
 
 
 # ── Locations ────────────────────────────────────────────────────────────────────
@@ -460,6 +625,28 @@ async def get_webhook_subscriptions() -> dict:
     return await _call("get_webhook_subscriptions")
 
 
+@mycase_mcp.tool(
+    name="describe_entity_fields",
+    description=(
+        "List the fields available on a MyCase entity — including THIS FIRM'S OWN custom "
+        "fields, read live — plus what each notable field actually means. Pass an entity "
+        "('cases', 'leads', 'invoices', 'payments', 'clients', 'staff') or omit it for all.\n\n"
+        "CALL THIS FIRST whenever the user names a field, date or attribute you are not "
+        "certain maps to a real field — e.g. 'SOL date', 'entry date', 'processing agent', "
+        "'case type', 'jurisdiction'. Guessing a field name, or assuming a field doesn't "
+        "exist, is how questions get answered wrong: 'cases with a missing SOL date' failed "
+        "purely because nothing told the agent that `sol_date` is a real native case field.\n\n"
+        "Returns per entity: notable_fields (name -> meaning, including COMPUTED fields like "
+        "assigned_attorney and client_name that these tools calculate but MyCase does not "
+        "return) and custom_fields (exact name + type — pass them verbatim as a "
+        "custom_field_filters key or group_by value). Never hardcode or guess a custom field "
+        "name; they differ per firm."
+    ),
+)
+async def describe_entity_fields(entity: str | None = None) -> dict:
+    return await _call("describe_entity_fields", entity=entity)
+
+
 # ── Case reporting (deterministic, computed server-side — not LLM-computed) ──────
 
 @mycase_mcp.tool(
@@ -473,6 +660,14 @@ async def get_webhook_subscriptions() -> dict:
         "get truncated before you see them all) and this tool does the counting exactly, "
         "in code, no matter how many cases match. It walks EVERY matching page internally.\n\n"
         "practice_area: substring-matches the case's built-in Practice Area field.\n"
+        "custom_field_filters VALUE CONVENTIONS — all three, do not confuse them:\n"
+        "  \"\"  (empty string) = the field is BLANK. Use for 'cases with NO assigned attorney'.\n"
+        "  \"*\" (asterisk)     = the field HAS ANY value. Use for 'cases WITH an assigned "
+        "attorney', 'cases that have a Processing Agent'. Read the question's polarity "
+        "carefully: 'with X' and 'without X' need opposite values here, and getting it backwards "
+        "returns exactly the wrong set (confirmed live — 'Criminal cases WITH assigned "
+        "attorneys' was answered with the 49 UNASSIGNED ones, when 188 of the 237 do have one).\n"
+        "  anything else       = case-insensitive SUBSTRING match on the value.\n"
         "custom_field_filters: {custom field NAME: substring value}, e.g. "
         "{\"CASE TYPE\": \"Asylum\"} — resolve exact field names via get_custom_fields() first, "
         "don't guess. Matches ANY value containing the substring (so 'Asylum' matches both "
@@ -488,13 +683,36 @@ async def get_webhook_subscriptions() -> dict:
         "does not fuzzy-match stages. Do NOT rely on group_by=case_stage alone to answer a "
         "'cases where stage is X' request — group_by only labels/counts every surviving row by "
         "its group, it does not filter which rows survive; pass case_stages to actually filter.\n"
-        "group_by: either a builtin field (practice_area, case_stage, status, billing_type) OR "
-        "a custom field NAME (e.g. 'PROCESSING AGENT') to group and count by. Defaults to "
-        "practice_area if omitted.\n\n"
+        "group_by: either a builtin field (practice_area, case_stage, status, billing_type, "
+        "sol_date), 'assigned_attorney'/'client_name' (computed — see below), OR a custom field "
+        "NAME (e.g. 'PROCESSING AGENT') to group and count by. ALWAYS pass the exact dimension "
+        "the user named — do NOT omit this and let it silently default to practice_area when "
+        "the user asked about a DIFFERENT dimension. 'stage' means group_by='case_stage', NOT "
+        "practice_area — these are different fields (confirmed live: omitting group_by for "
+        "'which case stage has the most cases' silently defaulted to practice_area and gave a "
+        "wrong answer). 'attorney'/'lawyer' means 'assigned_attorney'; 'client' means "
+        "'client_name'. The returned `groups` array (see below) already has the per-group counts "
+        "sorted highest-first — for 'which X has the most/fewest cases', read `groups[0]`/"
+        "`groups[-1]` directly, do NOT scan the flat `items` list yourself to find the max.\n\n"
         "opened_after/opened_before, closed_after/closed_before, updated_after/updated_before "
         "(all YYYY-MM-DD, inclusive): filter on the case's opened_date/closed_date/updated_at. "
-        "MyCase has NO server-side filter for opened_date/closed_date at all — this computes "
-        "them client-side, so they are always exact regardless of dataset size.\n\n"
+        "created_after/created_before filter on the case's own created_at — use these (NOT "
+        "opened_date) for 'recently created cases'/'cases created this month'. sol_date_after/"
+        "sol_date_before filter on `sol_date`, MyCase's native statute-of-limitations date field "
+        "on a case (it is a REAL builtin field, not a custom field). For 'cases with a missing/"
+        "no SOL date', pass custom_field_filters={\"sol_date\": \"\"} instead (sol_date is a "
+        "valid custom_field_filters/group_by key exactly like any other builtin field). MyCase "
+        "has NO server-side filter for opened_date/closed_date/created_at/sol_date at all — this "
+        "computes them client-side, so they are always exact regardless of dataset size.\n\n"
+        "min_group_size/max_group_size: filter on HOW MANY ROWS ARE IN EACH GROUP (a SQL "
+        "HAVING clause). This is the ONLY correct way to answer 'clients who have more than one "
+        "case' (group_by='client_name', min_group_size=2), 'attorneys with at least 10 open "
+        "cases' (group_by='assigned_attorney', status='open', min_group_size=10) or 'practice "
+        "areas with only one case' (max_group_size=1). Do NOT instead group everything and try "
+        "to pick out the large groups yourself — confirmed live that this returns every matching "
+        "case (2,380 rows) and answers the question wrong. Groups outside the range are dropped "
+        "entirely from items/groups/total_cases; `groups_before_size_filter` tells you how many "
+        "groups there were beforehand.\n"
         "days_to_close_min/days_to_close_max: for a DURATION question about a case's OWN "
         "opened_date vs closed_date ('cases closed within 1 month/30 days of opening', 'took "
         "longer than 90 days to close') — do NOT approximate this with opened_after/"
@@ -513,8 +731,12 @@ async def get_webhook_subscriptions() -> dict:
         "column holding the raw, unmodified value — the main 'PROCESSING AGENT' column is "
         "whitespace-cleaned and blank/null values become '(unassigned)'. Plus that case's "
         "group_name and the group's case_count. Report-level totals (total_cases, total_groups, "
-        "group_by_field, report_date) are returned once at the top level, not repeated per row. "
-        "Present the items as-is (each field, including each custom field, as its own column) — "
+        "group_by_field, report_date) are returned once at the top level, not repeated per row, "
+        "along with a `groups` array — [{name, count}, ...] sorted highest-count-first — the "
+        "correct source for ANY 'group X by Y' or 'which Y has the most/fewest' request: render "
+        "one line/row per group directly from `groups` (do not just dump the flat `items` list "
+        "as a single undifferentiated table when the user asked for a breakdown). Present each "
+        "item's fields as-is (each field, including each custom field, as its own column) — "
         "no further math needed.\n\n"
         "limit: use this whenever the user asked for a SPECIFIC NUMBER of cases (e.g. 'show me "
         "5 immigration cases') — do NOT use search_cases for this (search_cases is only for "
@@ -552,8 +774,14 @@ async def aggregate_cases(
     opened_before: str | None = None,
     closed_after: str | None = None,
     closed_before: str | None = None,
+    created_after: str | None = None,
+    created_before: str | None = None,
+    sol_date_after: str | None = None,
+    sol_date_before: str | None = None,
     days_to_close_min: int | None = None,
     days_to_close_max: int | None = None,
+    min_group_size: int | None = None,
+    max_group_size: int | None = None,
     limit: int | None = None,
     include_invoices: bool = False,
 ) -> dict:
@@ -563,7 +791,10 @@ async def aggregate_cases(
         status=status, updated_after=updated_after, updated_before=updated_before,
         opened_after=opened_after, opened_before=opened_before,
         closed_after=closed_after, closed_before=closed_before,
+        created_after=created_after, created_before=created_before,
+        sol_date_after=sol_date_after, sol_date_before=sol_date_before,
         days_to_close_min=days_to_close_min, days_to_close_max=days_to_close_max,
+        min_group_size=min_group_size, max_group_size=max_group_size,
         limit=limit, include_invoices=include_invoices,
     )
 

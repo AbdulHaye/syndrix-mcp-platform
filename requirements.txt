@@ -49,6 +49,13 @@ cryptography==49.0.0  # used directly in app/services/crypto.py, not just via py
 structlog==26.1.0
 langfuse==4.14.1  # LLM observability/tracing — see app/services/tracing.py
 
+# ── Report generation ─────────────────────────────────────────────────────────
+# Used by app/services/report_builder.py to write .xlsx workbooks (write_only mode
+# for near-constant memory on large row counts). Pulls in et-xmlfile only — pandas
+# is deliberately NOT a dependency here: all grouping/aggregation is plain Python,
+# which is more than fast enough at this data scale and keeps the image small.
+openpyxl==3.1.5
+
 # ── Misc ──────────────────────────────────────────────────────────────────────
 numpy==2.2.6
 aiosmtplib==5.1.2

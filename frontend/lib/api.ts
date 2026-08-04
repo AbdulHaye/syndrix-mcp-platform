@@ -362,6 +362,29 @@ export async function downloadPodioExport(appId: number, filename?: string): Pro
   URL.revokeObjectURL(url);
 }
 
+export async function downloadMyCaseReport(reportId: string, filename?: string): Promise<void> {
+  const auth = getAuth();
+  const res = await fetch(`${BASE}/agent/mycase/reports/${reportId}`, {
+    headers: auth?.token ? { Authorization: `Bearer ${auth.token}` } : undefined,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    let msg = `HTTP ${res.status}`;
+    try { msg = JSON.parse(text)?.detail ?? msg; } catch {}
+    throw new Error(msg);
+  }
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const nameMatch = disposition.match(/filename="([^"]+)"/);
+  const name = filename || nameMatch?.[1] || `mycase_report_${reportId}.xlsx`;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export async function uploadPodioFile(
   file: File,
   itemId?: number,

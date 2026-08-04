@@ -86,6 +86,255 @@ MYCASE_ITEMS: list[dict] = [
         ),
         "metadata": {"category": "scope-restriction-sanity-check"},
     },
+    # ── 2026-08-04 session: 16 real user-reported bugs, root-caused via live probes ──
+    {
+        "input": {"message": "Show recently created cases from MyCase."},
+        "expected_output": (
+            "aggregate_cases is called with created_after (the case's own created_at), NOT "
+            "opened_after — opened_date is a separate case-management concept. The word "
+            "'created' should not need to be present for this to work correctly."
+        ),
+        "metadata": {"category": "date-filter", "incident": "2026-08-04 'recently created cases' needed the literal word 'created' to work"},
+    },
+    {
+        "input": {"message": "List all cases with missing SOL date."},
+        "expected_output": (
+            "aggregate_cases is called with custom_field_filters={'sol_date': ''} — sol_date is "
+            "a REAL native MyCase case field (confirmed live), NOT a custom field, so it must be "
+            "recognized directly rather than the agent saying it doesn't understand 'SOL date'."
+        ),
+        "metadata": {"category": "unknown-field", "incident": "2026-08-04 agent didn't understand the SOL date field; sol_date is a real builtin case field missing from _BUILTIN_CASE_FIELDS"},
+    },
+    {
+        "input": {"message": "Find duplicate contacts based on email or phone number."},
+        "expected_output": (
+            "find_duplicate_clients is called. KNOWN LIMITATION on this account: MyCase's own "
+            "/clients endpoint can return HTTP 504 even at page_size=1 (confirmed live, retries "
+            "don't help) — if that happens, the agent must say so plainly, not claim zero "
+            "duplicate contacts exist."
+        ),
+        "metadata": {"category": "missing-tool", "incident": "2026-08-04 no duplicate-contact detection tool existed at all"},
+    },
+    {
+        "input": {"message": "Show all contacts created this month."},
+        "expected_output": (
+            "aggregate_clients is called ONCE with created_after/created_before covering the "
+            "current month — not multiple manual queries. Same /clients 504 known-limitation "
+            "caveat as the duplicate-contacts item applies."
+        ),
+        "metadata": {"category": "missing-tool", "incident": "2026-08-04 'contacts created this month' needed multiple queries and still filtered wrong"},
+    },
+    {
+        "input": {"message": "Show prospects that need follow-up."},
+        "expected_output": (
+            "aggregate_leads is called with status='NEED FOLLOW-UP' (the real, exact literal "
+            "status string confirmed live in this account) — NOT an unfiltered lead dump. Every "
+            "returned row's status is genuinely 'NEED FOLLOW-UP'."
+        ),
+        "metadata": {"category": "missing-tool", "incident": "2026-08-04 'prospects that need follow-up' returned all leads unfiltered"},
+    },
+    {
+        "input": {"message": "Find prospects that have no assigned attorney."},
+        "expected_output": (
+            "aggregate_leads is called with assigned_attorney='' — resolved via each lead's "
+            "linked case's lead_lawyer staff flag (confirmed live: most leads genuinely have no "
+            "linked case yet, so this should return a real, large, non-empty result, not nothing)."
+        ),
+        "metadata": {"category": "missing-tool", "incident": "2026-08-04 'prospects with no assigned attorney' returned no data"},
+    },
+    {
+        "input": {"message": "Show number of active cases assigned to each attorney."},
+        "expected_output": (
+            "aggregate_cases is called with status='open' (or the real 'active' status string) "
+            "and group_by='assigned_attorney'. The reply presents a per-attorney breakdown "
+            "directly from the returned `groups` array (name+count per attorney) — it does NOT "
+            "just say 'see the table below' and leave a flat, ungrouped case list standing in "
+            "for the requested breakdown."
+        ),
+        "metadata": {"category": "grouping-presentation", "incident": "2026-08-04 grouped requests returned a flat ungrouped case list instead of a per-group breakdown"},
+    },
+    {
+        "input": {"message": "Show staff members with their roles and permissions."},
+        "expected_output": (
+            "The agent states plainly that MyCase's API exposes no role/permission data for "
+            "staff (confirmed live: only name/email/title/type/default_hourly_rate/active exist) "
+            "— it does NOT fabricate roles/permissions from `title`/`type` as if they were an "
+            "access-control system."
+        ),
+        "metadata": {"category": "unsupported-data", "incident": "2026-08-04 agent didn't understand the role/permission parameter — it genuinely does not exist in MyCase's API"},
+    },
+    {
+        "input": {"message": "Find users who can access case management."},
+        "expected_output": (
+            "The agent states plainly that MyCase exposes no access-control/permissions data at "
+            "all — it does not guess or silently return nothing with no explanation."
+        ),
+        "metadata": {"category": "unsupported-data", "incident": "2026-08-04 agent didn't know how to check this parameter — it genuinely does not exist"},
+    },
+    {
+        "input": {"message": "List unpaid invoices grouped by client."},
+        "expected_output": (
+            "aggregate_invoices is called with paid=False and group_by='client_name' (resolved "
+            "via each invoice's linked case, NOT the /clients endpoint). The reply presents a "
+            "per-client breakdown from the returned `groups` array, not one flat unpaid-invoice "
+            "list with no grouping applied."
+        ),
+        "metadata": {"category": "missing-feature", "incident": "2026-08-04 'unpaid invoices grouped by client' returned all unpaid invoices, ungrouped"},
+    },
+    {
+        "input": {"message": "Show invoices by assigned attorney."},
+        "expected_output": (
+            "aggregate_invoices(group_by='assigned_attorney') or aggregate_payments(group_by="
+            "'attorney') is called — real attorney names with real counts/amounts. The agent "
+            "must NOT reply with a plain unpaid-invoices list (the original hallucination) — "
+            "'by assigned attorney' must actually appear as the grouping dimension."
+        ),
+        "metadata": {"category": "hallucination", "incident": "2026-08-04 'invoices by assigned attorney' hallucinated a plain unpaid-invoices list instead of grouping by attorney"},
+    },
+    {
+        "input": {"message": "Show all payments received in MyCase."},
+        "expected_output": (
+            "aggregate_payments is called (NOT a raw get_invoice_payments dump the agent tries "
+            "to eyeball-sum). The reply states the real total_payments/total_amount — confirmed "
+            "live this account has 9,314 payments totaling ~$8.16M — not 'no data'."
+        ),
+        "metadata": {"category": "missing-tool", "incident": "2026-08-04 'all payments received' returned no data — no deterministic payments tool existed"},
+    },
+    {
+        "input": {"message": "Show payment history for a case 43820502"},
+        "expected_output": (
+            "get_case_payments(case_id=43820502) is called — a REAL tool call, not text that "
+            "looks like a tool call leaking into the reply. If the case has no payments, the "
+            "agent says so plainly instead of erroring or fabricating a call."
+        ),
+        "metadata": {"category": "tool-call-leak", "incident": "2026-08-04 'payment history for a case' produced a fake tool-call-shaped reply instead of a real answer — no matching tool existed"},
+    },
+    {
+        "input": {"message": "List cases grouped by case stage."},
+        "expected_output": (
+            "aggregate_cases(group_by='case_stage') is called. The reply presents a per-stage "
+            "breakdown directly from the returned `groups` array (name+count per stage) instead "
+            "of dumping the flat, ungrouped case list and calling that 'grouped'."
+        ),
+        "metadata": {"category": "grouping-presentation", "incident": "2026-08-04 'cases grouped by case stage' returned all cases, ungrouped"},
+    },
+    {
+        "input": {"message": "Show open cases by stage."},
+        "expected_output": (
+            "aggregate_cases(status='open', group_by='case_stage') is called. Same per-stage "
+            "breakdown-from-`groups` requirement as the plain 'grouped by case stage' item."
+        ),
+        "metadata": {"category": "grouping-presentation", "incident": "2026-08-04 'open cases by stage' returned all cases, ungrouped"},
+    },
+    {
+        "input": {"message": "Which stage has the highest number of cases?"},
+        "expected_output": (
+            "aggregate_cases(group_by='case_stage') is called — group_by must NOT be omitted — "
+            "and the reply's claimed top stage matches groups[0] (the real, sorted-by-count-"
+            "descending first entry) of the actual result, with the reply naming a real case "
+            "STAGE value (e.g. 'CLOSED'), not a practice area."
+        ),
+        "metadata": {"category": "wrong-answer", "incident": "2026-08-04 'which stage has the highest number of cases' gave a wrong answer — no groups summary existed, only a flat truncatable row list"},
+    },
+    # ── 2026-08-04: group-size (HAVING) filtering ──
+    {
+        "input": {"message": "Show me clients who have more than one case"},
+        "expected_output": (
+            "aggregate_cases(group_by='client_name', min_group_size=2) — a single call. The reply "
+            "presents the surviving GROUPS (each client + their case count), not individual cases. "
+            "It must NOT call aggregate_clients/get_clients (a client record carries no case count, "
+            "and that endpoint 504s on this account), and must NOT dump every matching case and "
+            "eyeball which clients appear twice — the originally reported failure returned all "
+            "2,380 cases ungrouped."
+        ),
+        "metadata": {
+            "category": "group-size-having",
+            "incident": "2026-08-04 'clients with more than one case' had no HAVING primitive; observed "
+                        "failing two different ways — 2,380 ungrouped rows, and a wrong-tool call to "
+                        "aggregate_clients that 504'd",
+        },
+    },
+    {
+        "input": {"message": "Which attorneys have at least 50 open cases?"},
+        "expected_output": (
+            "aggregate_cases(status='open', group_by='assigned_attorney', min_group_size=50). Reply "
+            "lists only attorneys meeting the threshold, with counts, from the `groups` array."
+        ),
+        "metadata": {"category": "group-size-having"},
+    },
+    {
+        "input": {"message": "Which practice areas have only one case?"},
+        "expected_output": (
+            "aggregate_cases(group_by='practice_area', max_group_size=1) — the max_group_size side "
+            "of the same primitive."
+        ),
+        "metadata": {"category": "group-size-having"},
+    },
+    {
+        "input": {"message": "Show me the top 5 clients by unpaid balance"},
+        "expected_output": (
+            "aggregate_invoices(paid=False, group_by='client_name'). CRITICAL: the reply must not "
+            "present placeholder buckets as clients. ~3,222 case ids referenced by invoices return "
+            "404 (the case was deleted in MyCase), so those invoices group under "
+            "'(case deleted in MyCase)' / '(no case linked)'. A real reply once opened with "
+            "\"Top groups: (no case) ($77,091), (unknown case) ($46,110)\" — reading as if two "
+            "clients were named that. Placeholders must be reported separately as unmatched."
+        ),
+        "metadata": {
+            "category": "unresolved-placeholder-groups",
+            "incident": "2026-08-04 dangling invoice->case references surfaced as fake client names",
+        },
+    },
+    # ── 2026-08-04: LLM-directed Excel reporting (build_report) ──
+    {
+        "input": {
+            "message": "Show number of active cases assigned to each attorney, with each "
+                       "attorney's cases on a separate sheet and a summary"
+        },
+        "expected_output": (
+            "aggregate_cases is called with status='open' and group_by='assigned_attorney' and "
+            "NO limit, then build_report is called with both a `summary` section (group_by="
+            "'assigned_attorney', metrics [{op:count}]) and a `detail_sheets` section "
+            "(split_by='assigned_attorney'). The reply states the totals and lists the "
+            "per-attorney breakdown from the report's `summary`, and does NOT paste the "
+            "download_url or re-list individual cases. A Download Excel button renders."
+        ),
+        "metadata": {
+            "category": "excel-report",
+            "incident": "2026-08-04 the chat could only ever render ONE flat table per resource, so "
+                        "'one sheet per attorney plus a summary' had no code path at all",
+        },
+    },
+    {
+        "input": {"message": "Export all unpaid invoices to excel, grouped by client"},
+        "expected_output": (
+            "aggregate_invoices(paid=False, group_by='client_name') with no limit, then "
+            "build_report with split_by/group_by on client_name. Reply gives the per-client "
+            "breakdown plus a Download button — not a flat invoice dump."
+        ),
+        "metadata": {"category": "excel-report"},
+    },
+    {
+        "input": {"message": "Give me 5 immigration cases"},
+        "expected_output": (
+            "A SMALL plain listing — aggregate_cases(practice_area='Immigration', limit=5) and a "
+            "normal inline table. The agent must NOT build an Excel report for this: nothing was "
+            "grouped or split, and forcing a workbook onto a 5-row listing would be a regression. "
+            "This item exists to catch over-triggering of build_report."
+        ),
+        "metadata": {"category": "excel-report-sanity-check"},
+    },
+    {
+        "input": {"message": "Which case stage has the highest number of cases?"},
+        "expected_output": (
+            "aggregate_cases is called with group_by='case_stage' EXPLICITLY passed — the reply "
+            "must name a real case stage value (e.g. 'CLOSED', 'IMMIGRATION- SUBMITTED (MAIL/"
+            "UPLOAD PACKAGE)'). The reply must NOT answer with a practice area name (e.g. "
+            "'Immigration') — that means group_by was omitted and silently defaulted to "
+            "practice_area instead of the case_stage dimension the user explicitly asked about."
+        ),
+        "metadata": {"category": "wrong-group-by-dimension", "incident": "2026-08-04 live agent-chat test: the model omitted group_by entirely, it defaulted to practice_area, and the reply answered with a practice area breakdown ('Immigration: 4,002 cases') instead of case stages — caught via a real end-to-end chat test, not just the underlying tool logic, which was already correct"},
+    },
 ]
 
 PODIO_ITEMS: list[dict] = [
@@ -125,9 +374,10 @@ def seed(dataset_name: str, description: str, items: list[dict]) -> None:
 if __name__ == "__main__":
     seed(
         MYCASE_DATASET,
-        "Real prompts that previously exposed bugs in the MyCase Agent (aggregate_cases "
-        "filtering, scope restriction) — re-run after any change to mycase_agent.py's system "
-        "prompt or mycase_rest.py's aggregate_cases to catch a regression before a user does.",
+        "Real prompts that previously exposed bugs in the MyCase Agent (aggregate_cases/"
+        "aggregate_leads/aggregate_invoices/aggregate_payments filtering and grouping, missing "
+        "native fields, scope restriction) — re-run after any change to mycase_agent.py's system "
+        "prompt or mycase_rest.py's aggregate_* tools to catch a regression before a user does.",
         MYCASE_ITEMS,
     )
     seed(

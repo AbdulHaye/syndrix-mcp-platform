@@ -4,7 +4,7 @@ import uuid as uuid_lib
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from langfuse import propagate_attributes
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -70,10 +70,44 @@ async def mycase_agent(
             user_id=identity.team_name, session_id=body.session_id, tags=["mycase-agent"],
             metadata={"team": identity.team_name, "role": identity.role},
         ):
-            return await run_mycase_agent(body.message, history)
+            return await run_mycase_agent(body.message, history, team=identity.team_name)
     except Exception as exc:  # noqa: BLE001
         logger.error("mycase_agent_failed", error=str(exc))
         return {"success": False, "reply": "", "steps": [], "error": str(exc)}
+
+
+@router.get("/mycase/reports/{report_id}", summary="Download a generated MyCase Excel report")
+async def download_mycase_report(
+    report_id: str,
+    identity: TeamIdentity = Depends(require_auth),
+) -> Response:
+    """Serve an .xlsx built earlier in a chat turn by the `build_report` tool.
+
+    Same response shape as the Podio export endpoint (app/api/podio_files.py) so
+    the frontend's existing authed-blob-download helper works unchanged.
+    """
+    _require_bd_or_admin(identity)
+    from app.services.report_store import report_store
+
+    record = await report_store.get(report_id)
+    if record is None:
+        # Reports live ~1h. An expired id is the common case here, and saying so
+        # is more useful than a bare 404 — the fix is to re-run the request.
+        raise HTTPException(
+            status_code=404,
+            detail="That report has expired or does not exist. Ask the agent to build it again.",
+        )
+    # A report id is effectively a bearer capability, so scope it to the team that
+    # created it (admins excepted) rather than letting any leaked id be redeemed.
+    if record["team"] and record["team"] != identity.team_name and identity.role != TeamRole.ADMIN:
+        raise HTTPException(status_code=403, detail="This report belongs to another team.")
+
+    safe_name = record["filename"].replace('"', "'")
+    return Response(
+        content=record["payload"],
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+    )
 
 
 # ── Chat session persistence (mirrors app/api/agent.py's Podio session CRUD) ────

@@ -173,7 +173,42 @@ class MyCaseREST:
     async def is_connected(self) -> bool:
         return bool(await get_setting("mycase_access_token"))
 
-    async def connection_status(self) -> dict[str, Any]:
+    async def _validate_token(self, token: str) -> tuple[bool | None, str | None]:
+        """One cheap real call to prove the stored token is actually accepted.
+
+        Returns (valid, error): True/None when it works, False/reason when MyCase
+        rejects it, and (None, reason) when we genuinely can't tell — a network
+        blip must never be reported to the user as "your token is dead".
+
+        Cached briefly because the UI polls connection_status for its countdown;
+        without the cache this would add an API call every few seconds.
+        """
+        cached = self._token_check_cache.get(token)
+        if cached and time.time() - cached[0] < self._TOKEN_CHECK_TTL:
+            return cached[1], cached[2]
+
+        valid: bool | None
+        error: str | None
+        try:
+            await self.get_me()
+            valid, error = True, None
+        except RuntimeError as exc:
+            message = str(exc)
+            if "401" in message or "403" in message:
+                valid, error = False, message[:200]
+            else:
+                # 5xx / rate limit / anything else — unknown, not "invalid".
+                valid, error = None, message[:200]
+        except Exception as exc:  # noqa: BLE001
+            valid, error = None, str(exc)[:200]
+
+        self._token_check_cache = {token: (time.time(), valid, error)}
+        return valid, error
+
+    _TOKEN_CHECK_TTL = 60  # seconds
+    _token_check_cache: dict[str, tuple[float, bool | None, str | None]] = {}
+
+    async def connection_status(self, validate: bool = True) -> dict[str, Any]:
         """Richer than is_connected() — a real incident showed the UI's "MyCase
         connected" badge staying up unchanged even after the stored token had
         actually expired, because is_connected() only checks that SOME token
@@ -181,9 +216,15 @@ class MyCaseREST:
         expiry (when known) so the UI can show a live countdown / an honest
         "expired" state instead of a static badge that can silently lie.
 
-        Does NOT trigger a refresh — this is a cheap, side-effect-free read of
-        currently stored settings; the real refresh already happens transparently
-        in _get_valid_token() before any actual MyCase API call.
+        The stored expiry alone is NOT enough, though — confirmed live: a
+        manually-pasted token has no stored expiry at all, so this reported
+        `connected: true, expired: false` for hours while every single MyCase
+        call was returning 401. `validate=True` therefore makes one cheap,
+        60s-cached real API call so `token_valid` reflects what MyCase actually
+        thinks, not just whether a string is present in the database.
+
+        Does NOT trigger a refresh — the real refresh already happens
+        transparently in _get_valid_token() before any actual MyCase API call.
         """
         token = await get_setting("mycase_access_token")
         refresh_token = await get_setting("mycase_refresh_token")
@@ -200,8 +241,18 @@ class MyCaseREST:
             except ValueError:
                 expires_at = None
 
+        token_valid: bool | None = None
+        token_error: str | None = None
+        if token and validate:
+            token_valid, token_error = await self._validate_token(token)
+
         return {
             "connected": bool(token),
+            # What MyCase itself says, as opposed to what our settings table
+            # implies: True = a real call just succeeded, False = rejected
+            # (reconnect needed), None = not checked or genuinely unknown.
+            "token_valid": token_valid,
+            "token_error": token_error,
             # expires_at/expires_in_seconds are null when the expiry is genuinely
             # unknown — e.g. a manually-pasted access token with no accompanying
             # refresh token, which _store_token() never got an expires_in for.
@@ -266,11 +317,16 @@ class MyCaseREST:
     async def _request(self, method: str, path: str, params: dict[str, Any] | None = None) -> httpx.Response:
         headers = await self._headers()
         clean = {k: v for k, v in (params or {}).items() if v is not None}
-        # Retries cover BOTH: rate limiting (429 — checked via status code after a response
-        # comes back) AND transient network failures (httpx.TransportError — e.g. the
-        # "All connection attempts failed" ConnectError class — which raises INSTEAD OF
-        # returning a response, so it needs its own try/except; a bare status-code check
-        # after the request call never runs if the request itself raised).
+        # Retries cover THREE things: rate limiting (429), transient SERVER-side errors
+        # (502/503/504 — confirmed live: /clients 504'd "Endpoint request timed out" on this
+        # account even at page_size=1, reproduced twice — MyCase's own gateway, not a client
+        # timeout, since a real response with a status code came back) — both checked via
+        # status code after a response comes back — AND transient network failures
+        # (httpx.TransportError — e.g. the "All connection attempts failed" ConnectError
+        # class — which raises INSTEAD OF returning a response, so it needs its own
+        # try/except; a bare status-code check after the request call never runs if the
+        # request itself raised).
+        _RETRYABLE_STATUS = {429, 502, 503, 504}
         _RETRY_DELAYS = [1, 2, 4]  # seconds between retries (rate limit is 25 req/s per client)
         resp: httpx.Response | None = None
         for attempt, delay in enumerate([0] + _RETRY_DELAYS):
@@ -285,7 +341,7 @@ class MyCaseREST:
                     continue
                 logger.error("mycase_connection_error", path=path, detail=str(exc))
                 raise RuntimeError(f"Could not connect to MyCase's API after retries: {exc}") from exc
-            if resp.status_code == 429 and attempt < len(_RETRY_DELAYS):
+            if resp.status_code in _RETRYABLE_STATUS and attempt < len(_RETRY_DELAYS):
                 continue
             break
         assert resp is not None
@@ -495,6 +551,43 @@ class MyCaseREST:
             logger.warning("mycase_scan_cap_probe_missing_item_count", resource="cases", probe_keys=list(probe.keys()))
         return cap
 
+    async def _client_scan_cap(self, requested: int | None) -> int:
+        """Same idea, for the firm-wide client walk in aggregate_clients/
+        find_duplicate_clients. The /clients endpoint has been observed to
+        return HTTP 504 ("Endpoint request timed out") on this account even at
+        page_size=1 — _request() now retries 502/503/504 automatically (see its
+        _RETRYABLE_STATUS), but a very large client list may still be slow or
+        fail; callers should report that plainly rather than assume zero
+        clients exist."""
+        if requested is not None:
+            return requested
+        probe = await self.get_clients(page_size=1)
+        cap, ok = self._cap_from_probe(requested, probe)
+        if not ok:
+            logger.warning("mycase_scan_cap_probe_missing_item_count", resource="clients", probe_keys=list(probe.keys()))
+        return cap
+
+    async def _lead_scan_cap(self, requested: int | None) -> int:
+        """Same idea, for the firm-wide lead walk in aggregate_leads."""
+        if requested is not None:
+            return requested
+        probe = await self.get_leads(page_size=1)
+        cap, ok = self._cap_from_probe(requested, probe)
+        if not ok:
+            logger.warning("mycase_scan_cap_probe_missing_item_count", resource="leads", probe_keys=list(probe.keys()))
+        return cap
+
+    async def _payment_scan_cap(self, requested: int | None) -> int:
+        """Same idea, for the firm-wide invoice-payments walk in aggregate_payments.
+        Confirmed live: this real account has 9,314 total invoice payments."""
+        if requested is not None:
+            return requested
+        probe = await self.get_invoice_payments(page_size=1)
+        cap, ok = self._cap_from_probe(requested, probe)
+        if not ok:
+            logger.warning("mycase_scan_cap_probe_missing_item_count", resource="invoice_payments", probe_keys=list(probe.keys()))
+        return cap
+
     async def _document_scan_cap(self, requested: int | None) -> int:
         """Same idea, for the firm-wide document walk in find_cases_with_documents.
         Confirmed live: this real account has 48,161 total documents — past the
@@ -686,6 +779,188 @@ class MyCaseREST:
     async def get_client_message_threads(self, client_id: int):
         return await self._get_list(f"/clients/{int(client_id)}/message_threads")
 
+    # Grouping clients by their own identifier can never produce a group larger
+    # than 1, so it is always a mistake — and a specific, recurring one: asked for
+    # "clients who have more than one case", the model twice reached for
+    # aggregate_clients(group_by="id") instead of counting CASES per client. The
+    # count it wants does not exist on a client record at all. Caught before the
+    # (slow, 504-prone) /clients walk and turned into a corrective error.
+    _CLIENT_IDENTITY_FIELDS = {"id", "uuid", "client_id"}
+
+    async def aggregate_clients(
+        self,
+        created_after: str | None = None,
+        created_before: str | None = None,
+        group_by: str | None = None,
+        min_group_size: int | None = None,
+        max_group_size: int | None = None,
+        max_clients: int | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Fetch every client (contact) matching the given filters (paginating
+        internally, server-side, same deterministic pattern as aggregate_cases)
+        then group/count. NOTE: /clients has been observed to return HTTP 504
+        even at page_size=1 on this large a real account — _request() retries
+        502/503/504 automatically, but this call may still be slow or fail on a
+        very large client list; report the real error plainly if it does,
+        rather than assuming zero clients exist.
+
+        `created_after`/`created_before` (YYYY-MM-DD, inclusive) filter on the
+        client's own created_at — use this for "contacts created this month/
+        this week/on X"; MyCase has no server-side filter for this.
+        `group_by` — any field name present on a client record (e.g. "status")
+        — a plain lookup, grouped/counted the same way as aggregate_cases.
+        Returns the same shape: total_clients, total_groups, a `groups` array
+        ([{name, count}], sorted highest-count-first) when group_by is given,
+        and a flat `items` array.
+
+        `min_group_size`/`max_group_size` — HAVING on group size, as elsewhere
+        (e.g. group_by="email", min_group_size=2 to find shared email addresses).
+        NOTE this counts CLIENTS PER GROUP, never cases per client — see the
+        identity-field guard below for why that distinction keeps coming up.
+        """
+        # Rejected before the slow, 504-prone /clients walk rather than after it.
+        if group_by and group_by.strip().lower() in self._CLIENT_IDENTITY_FIELDS:
+            raise ValueError(
+                f"Grouping clients by '{group_by}' is meaningless — that field is unique per "
+                "client, so every group would contain exactly one row. If you are looking for "
+                "CLIENTS WHO HAVE MORE THAN ONE CASE, that is a cases question, not a clients "
+                "question: a client record carries no case count. Call "
+                "aggregate_cases(group_by='client_name', min_group_size=2) instead. To find "
+                "clients sharing a value (e.g. the same email), group by that field, or use "
+                "find_duplicate_clients."
+            )
+
+        client_cap = await self._client_scan_cap(max_clients)
+
+        async def fetch_page(token: str | None) -> dict[str, Any]:
+            return await self.get_clients(page_size=1000, page_token=token)
+
+        all_clients, truncated = await self._walk_all_pages(fetch_page, client_cap)
+
+        created_after_d, created_before_d = self._date_only(created_after), self._date_only(created_before)
+
+        def matches(cl: dict[str, Any]) -> bool:
+            if (created_after_d or created_before_d) and not self._date_matches(
+                cl.get("created_at"), None, created_after_d, created_before_d
+            ):
+                return False
+            return True
+
+        survivors = [cl for cl in all_clients if matches(cl)]
+
+        group_key = group_by.strip() if group_by else None
+        groups: list[dict[str, Any]] | None = None
+        counts: dict[str, int] = {}
+        groups_before_size_filter = 0
+        if group_key:
+            for cl in survivors:
+                val = cl.get(group_key)
+                g = str(val) if val not in (None, "") else "(none)"
+                cl["group_name"] = g
+                counts[g] = counts.get(g, 0) + 1
+
+            groups_before_size_filter = len(counts)
+            if min_group_size is not None or max_group_size is not None:
+                keep = {
+                    g for g, n in counts.items()
+                    if (min_group_size is None or n >= min_group_size)
+                    and (max_group_size is None or n <= max_group_size)
+                }
+                survivors = [cl for cl in survivors if cl.get("group_name") in keep]
+                counts = {g: n for g, n in counts.items() if g in keep}
+
+            groups = [{"name": n, "count": c} for n, c in sorted(counts.items(), key=lambda kv: kv[1], reverse=True)]
+
+        display_items = survivors[:limit] if limit is not None else survivors
+
+        return {
+            "success": True,
+            "total_clients": len(survivors),
+            "total_groups": len(counts) if group_key else None,
+            "group_by_field": group_key,
+            "groups": groups,
+            "clients_scanned": len(all_clients),
+            "truncated": truncated,
+            "clients_shown": len(display_items),
+            "limited": limit is not None and len(survivors) > len(display_items),
+            "items": display_items,
+            **(
+                {"group_size_filter": {"min": min_group_size, "max": max_group_size},
+                 "groups_before_size_filter": groups_before_size_filter}
+                if group_key and (min_group_size is not None or max_group_size is not None)
+                else {}
+            ),
+        }
+
+    async def find_duplicate_clients(self, max_clients: int | None = None) -> dict[str, Any]:
+        """Firm-wide duplicate-contact scan by email AND by phone (cell/home/
+        work) — MyCase has no server-side "find duplicates" endpoint, so this
+        walks every client ONCE (same dynamic-scan-cap pattern as
+        aggregate_cases) and groups by normalized email / normalized phone in
+        Python, returning ONLY groups with more than one client. Never let the
+        model eyeball a firm-wide contact list for this itself — at any real
+        scale it will miss matches or mismatch entries.
+
+        Email is normalized by lowercasing + stripping whitespace. Phone
+        numbers are normalized by stripping all non-digit characters (so
+        "(555) 123-4567" and "555-123-4567" are recognized as the same number);
+        fewer than 7 remaining digits is treated as unset/invalid and excluded.
+        A blank/missing email or phone is excluded from that dimension's
+        grouping — an empty string is never treated as a "duplicate".
+        """
+        client_cap = await self._client_scan_cap(max_clients)
+
+        async def fetch_page(token: str | None) -> dict[str, Any]:
+            return await self.get_clients(page_size=1000, page_token=token)
+
+        all_clients, truncated = await self._walk_all_pages(fetch_page, client_cap)
+
+        def norm_email(cl: dict[str, Any]) -> str | None:
+            e = (cl.get("email") or "").strip().lower()
+            return e or None
+
+        def norm_phones(cl: dict[str, Any]) -> list[str]:
+            phones = []
+            for key in ("cell_phone_number", "home_phone_number", "work_phone_number"):
+                digits = re.sub(r"\D", "", cl.get(key) or "")
+                if len(digits) >= 7:
+                    phones.append(digits)
+            return phones
+
+        def label(cl: dict[str, Any]) -> dict[str, Any]:
+            name = " ".join(p for p in (cl.get("first_name"), cl.get("last_name")) if p) or f"client #{cl.get('id')}"
+            return {
+                "id": cl.get("id"), "name": name, "email": cl.get("email"),
+                "cell_phone_number": cl.get("cell_phone_number"),
+                "home_phone_number": cl.get("home_phone_number"),
+                "work_phone_number": cl.get("work_phone_number"),
+            }
+
+        by_email: dict[str, list[dict[str, Any]]] = {}
+        by_phone: dict[str, list[dict[str, Any]]] = {}
+        for cl in all_clients:
+            e = norm_email(cl)
+            if e:
+                by_email.setdefault(e, []).append(label(cl))
+            for p in norm_phones(cl):
+                by_phone.setdefault(p, []).append(label(cl))
+
+        email_dupes = [{"email": k, "count": len(v), "clients": v} for k, v in by_email.items() if len(v) > 1]
+        phone_dupes = [{"phone": k, "count": len(v), "clients": v} for k, v in by_phone.items() if len(v) > 1]
+        email_dupes.sort(key=lambda d: d["count"], reverse=True)
+        phone_dupes.sort(key=lambda d: d["count"], reverse=True)
+
+        return {
+            "success": True,
+            "clients_scanned": len(all_clients),
+            "truncated": truncated,
+            "duplicate_email_groups": len(email_dupes),
+            "duplicate_phone_groups": len(phone_dupes),
+            "by_email": email_dupes,
+            "by_phone": phone_dupes,
+        }
+
     # ── Companies ────────────────────────────────────────────────────────────────
 
     async def get_companies(
@@ -706,6 +981,118 @@ class MyCaseREST:
         return await self._get_one(f"/companies/{int(company_id)}")
 
     # ── Custom Fields ────────────────────────────────────────────────────────────
+
+    # What each entity actually returns, with the aliases people say out loud.
+    # Kept deliberately small: only fields whose NAME does not give away what they
+    # are, or that are computed rather than returned by MyCase. Everything else is
+    # discovered live below — a hardcoded field list would go stale silently, and
+    # custom fields differ per firm (46 on this account).
+    _ENTITY_FIELD_GUIDE: dict[str, dict[str, str]] = {
+        "cases": {
+            "sol_date": "Statute-of-limitations date. A REAL native case field, not a custom "
+                        "field — say 'SOL', 'SOL date' or 'statute of limitations'.",
+            "opened_date": "When the matter was opened (NOT when the record was created).",
+            "created_at": "When the case RECORD was created — use this for 'recently created'.",
+            "closed_date": "When the matter was closed.",
+            "case_stage": "The firm's workflow stage. Resolve real values via get_case_stages().",
+            "status": "'open' or 'closed'. Independent of case_stage — they can disagree.",
+            "practice_area": "Area of law. Real values via get_practice_areas().",
+            "billing_type": "How the matter is billed.",
+            "outstanding_balance": "Amount still owed on the case.",
+            "assigned_attorney": "COMPUTED, not a MyCase field: the staff member flagged "
+                                 "lead_lawyer=true on the case. Say 'lead attorney'/'assigned attorney'.",
+            "client_name": "COMPUTED from the case's clients array.",
+            "days_to_close": "COMPUTED gap between opened_date and closed_date; only present "
+                             "when days_to_close_min/max was used.",
+        },
+        "leads": {
+            "status": "Firm-defined pre-intake status, matched EXACTLY. Real values seen here: "
+                      "'NEED FOLLOW-UP', 'New Lead', 'Need consultation', 'UNDECIDED', 'NOT FOUND YET'.",
+            "case": "Link to the case this lead became, once converted. A lead has no attorney "
+                    "of its own — it is resolved through this case.",
+            "created_at": "When the lead was created.",
+        },
+        "invoices": {
+            "balance_due": "COMPUTED total_amount - paid_amount.",
+            "total_amount": "Invoice total. Sometimes returned as a STRING by MyCase.",
+            "paid_amount": "Amount paid so far. Also sometimes a string.",
+            "status": "overdue, paid, partial, draft, unsent, sent or forwarded.",
+            "case": "Only a {id} link. An invoice has NO client or attorney field — both are "
+                    "resolved through this case.",
+            "invoice_date": "Date of the invoice itself (unrelated to created_at/updated_at).",
+            "due_date": "When payment is due.",
+        },
+        "payments": {
+            "attorney": "Present DIRECTLY on a payment (unlike invoices) — no join needed.",
+            "client": "Present directly on a payment.",
+            "case": "Present directly on a payment.",
+            "amount": "Payment amount.",
+            "date": "When the payment was taken.",
+            "status": "e.g. success, pending, failure.",
+        },
+        "clients": {
+            "created_at": "When the contact record was created.",
+            "email": "Primary email.",
+            "cell_phone_number": "Mobile number; formats vary, normalise before comparing.",
+        },
+        "staff": {
+            "type": "Job type as free text (e.g. 'Lawyer'). NOT a permissions role.",
+            "title": "Job title as free text. NOT a permissions role.",
+            "active": "Whether the staff member is active.",
+            "default_hourly_rate": "Default billing rate.",
+        },
+    }
+    # Entities MyCase exposes no custom fields for — asked for anyway, we should say so.
+    _CUSTOM_FIELD_PARENTS = {"case": "cases", "client": "clients", "company": "companies"}
+
+    async def describe_entity_fields(self, entity: str | None = None) -> dict[str, Any]:
+        """What fields exist on an entity, including this firm's own custom fields.
+
+        Exists because the agent could not answer "cases with a missing SOL date":
+        nothing told it the field existed or what it was called, so it had no way
+        to get there from the user's wording. That is a general failure mode, not
+        a one-off — every firm has different custom fields.
+
+        Custom fields are read LIVE (never hardcoded): this account has 46, and
+        they differ per firm, so a static list would quietly go out of date.
+        """
+        wanted = (entity or "").strip().lower().rstrip("s") if entity else None
+        alias = {"case": "cases", "lead": "leads", "prospect": "leads", "invoice": "invoices",
+                 "payment": "payments", "client": "clients", "contact": "clients",
+                 "staff": "staff", "attorney": "staff", "company": "companies"}
+        key = alias.get(wanted, f"{wanted}s") if wanted else None
+        if key and key not in self._ENTITY_FIELD_GUIDE and key != "companies":
+            raise ValueError(
+                f"Unknown entity '{entity}'. Known: {sorted(self._ENTITY_FIELD_GUIDE)}."
+            )
+
+        custom_by_parent: dict[str, list[dict[str, Any]]] = {}
+        for field in await self._load_custom_fields():
+            parent = self._CUSTOM_FIELD_PARENTS.get(str(field.get("parent_type") or "").lower())
+            if parent:
+                custom_by_parent.setdefault(parent, []).append(
+                    {"name": field.get("name"), "type": field.get("field_type")}
+                )
+
+        entities = [key] if key else sorted(self._ENTITY_FIELD_GUIDE)
+        out: dict[str, Any] = {}
+        for name in entities:
+            out[name] = {
+                "notable_fields": self._ENTITY_FIELD_GUIDE.get(name, {}),
+                "custom_fields": custom_by_parent.get(name, []),
+                "custom_fields_supported": name in self._CUSTOM_FIELD_PARENTS.values(),
+            }
+        return {
+            "success": True,
+            "entities": out,
+            "note": (
+                "Custom field names are read live and are exact — pass them verbatim as a "
+                "custom_field_filters key or group_by value. Fields marked COMPUTED are "
+                "calculated by these tools, not returned by MyCase, but can still be "
+                "filtered/grouped like real ones. MyCase exposes NO role or permission data "
+                "for staff at any level."
+            ),
+        }
 
     async def get_custom_fields(self, updated_after=None, page_size=None, page_token=None):
         return await self._get_list("/custom_fields", self._page(page_size, page_token, updated_after))
@@ -900,6 +1287,9 @@ class MyCaseREST:
         invoice_date_before: str | None = None,
         due_date_after: str | None = None,
         due_date_before: str | None = None,
+        group_by: str | None = None,
+        min_group_size: int | None = None,
+        max_group_size: int | None = None,
         sort_by: str = "balance_due",
         limit: int | None = None,
         only_allowed_online_payments: bool | None = None,
@@ -942,11 +1332,34 @@ class MyCaseREST:
         `only_allowed_online_payments` defaults to False (match ALL invoices,
         not just the online-payable subset) — same reasoning as every other
         invoice tool here.
+
+        `min_group_size`/`max_group_size` (require `group_by`) — HAVING on the
+        group's own size, same as aggregate_cases: "clients with more than one
+        unpaid invoice" is group_by="client_name", paid=False, min_group_size=2.
+
+        `group_by` (optional) — "client_name"/"client", "assigned_attorney"/
+        "lead_attorney", or "status". An invoice itself only carries `case:
+        {"id": N}` — no client or attorney field directly — so client_name/
+        assigned_attorney are resolved via ONE bulk walk of the firm's case list
+        (same case-join pattern as aggregate_cases/aggregate_leads, never a
+        separate call per invoice) that's only done when group_by actually
+        needs it. Adds a top-level `groups` array — [{name, count,
+        total_balance_due}], sorted by total_balance_due descending — and a
+        `group_name` column on every row. Use this for "unpaid invoices grouped
+        by client" or "invoices by assigned attorney" — do NOT try to answer
+        "by assigned attorney" some other way; an invoice's own `case` field
+        with no join is not enough, and guessing here has produced a wrong/
+        hallucinated answer before.
         """
         if status is not None and status.strip().lower() not in self._INVOICE_STATUSES:
             raise ValueError(f"status must be one of {sorted(self._INVOICE_STATUSES)}, got {status!r}")
         if sort_by not in ("balance_due", "due_date", "invoice_date"):
             raise ValueError("sort_by must be one of 'balance_due', 'due_date', 'invoice_date'")
+        _GROUP_KEYS = {"client_name", "client", "assigned_attorney", "lead_attorney", "lead attorney", "status"}
+        group_key = group_by.strip().lower() if group_by else None
+        if group_key is not None and group_key not in _GROUP_KEYS:
+            raise ValueError(f"'{group_by}' is not a valid group_by for invoices — use one of {sorted(_GROUP_KEYS)}.")
+        group_by_case_field = group_key in ("client_name", "client", "assigned_attorney", "lead_attorney", "lead attorney")
 
         effective_online_filter = only_allowed_online_payments if only_allowed_online_payments is not None else False
         invoice_cap = await self._invoice_scan_cap(max_invoices, only_allowed_online_payments=effective_online_filter)
@@ -1001,6 +1414,95 @@ class MyCaseREST:
         total_matching = len(survivors)
         display = survivors[:limit] if limit is not None else survivors
 
+        groups: list[dict[str, Any]] | None = None
+        if group_key is not None:
+            case_join: dict[int, dict[str, str]] = {}
+            if group_by_case_field:
+                staff_names = await self._staff_name_map()
+                case_cap = await self._case_scan_cap(None)
+
+                async def fetch_case_page(token: str | None) -> dict[str, Any]:
+                    return await self.get_cases(page_size=1000, page_token=token, field_client="id,first_name,last_name")
+
+                all_cases_for_join, _ = await self._walk_all_pages(fetch_case_page, case_cap)
+                for case in all_cases_for_join:
+                    cid = case.get("id")
+                    if not isinstance(cid, int):
+                        continue
+                    names = [
+                        " ".join(p for p in (cl.get("first_name"), cl.get("last_name")) if p)
+                        for cl in (case.get("clients") or [])
+                    ]
+                    client_name = ", ".join(n for n in names if n) or "(none)"
+                    attorney = None
+                    for s in case.get("staff") or []:
+                        if s.get("lead_lawyer") is True:
+                            sid = s.get("id")
+                            attorney = staff_names.get(sid, f"staff #{sid}") if isinstance(sid, int) else None
+                            break
+                    case_join[cid] = {"client_name": client_name, "assigned_attorney": attorney or "(unassigned)"}
+
+            def group_value(r: dict[str, Any]) -> str:
+                if group_key == "status":
+                    return r.get("status") or "(no status)"
+                cid = (r.get("case") or {}).get("id")
+                if not isinstance(cid, int):
+                    return "(no case linked)"
+                join = case_join.get(cid)
+                if join is None:
+                    # NOT a gap in our walk — confirmed live that the case list is
+                    # complete (7,247 of 7,247, untruncated) and that these ids
+                    # return a real 404 from MyCase: the invoice outlived the case
+                    # it points at. Labelled so it can never be mistaken for a
+                    # client's name in a "top clients" list.
+                    return "(case deleted in MyCase)"
+                return join["client_name"] if group_key in ("client_name", "client") else join["assigned_attorney"]
+
+            # The resolved value must land on the ROW under a real column name, not
+            # just in `group_name`. An invoice row has no client/attorney field of
+            # its own, so without this a workbook built with split_by=
+            # "assigned_attorney" finds nothing to split on and collapses 8 real
+            # attorney groups into a single "(none)" sheet — confirmed live.
+            resolved_column = (
+                "client_name" if group_key in ("client_name", "client")
+                else "assigned_attorney" if group_key in ("assigned_attorney", "lead_attorney", "lead attorney")
+                else None  # "status" is already a real column on the invoice
+            )
+
+            counts: dict[str, int] = {}
+            sums: dict[str, float] = {}
+            for r in survivors:
+                g = group_value(r)
+                r["group_name"] = g
+                if resolved_column:
+                    r[resolved_column] = g
+                counts[g] = counts.get(g, 0) + 1
+                sums[g] = sums.get(g, 0.0) + r["balance_due"]
+
+            # HAVING on group size — same primitive as aggregate_cases, e.g.
+            # "clients with more than one unpaid invoice".
+            groups_before_size_filter = len(counts)
+            if min_group_size is not None or max_group_size is not None:
+                keep = {
+                    g for g, n in counts.items()
+                    if (min_group_size is None or n >= min_group_size)
+                    and (max_group_size is None or n <= max_group_size)
+                }
+                survivors = [r for r in survivors if r.get("group_name") in keep]
+                counts = {g: n for g, n in counts.items() if g in keep}
+                sums = {g: v for g, v in sums.items() if g in keep}
+                total_matching = len(survivors)
+                display = survivors[:limit] if limit is not None else survivors
+
+            unresolved = sum(
+                n for g, n in counts.items()
+                if g in ("(no case linked)", "(case deleted in MyCase)")
+            )
+            groups = [
+                {"name": name, "count": counts[name], "total_balance_due": round(sums[name], 2)}
+                for name in sorted(counts, key=lambda n: sums[n], reverse=True)
+            ]
+
         return {
             "success": True,
             "total_invoices": total_matching,
@@ -1009,7 +1511,25 @@ class MyCaseREST:
             "invoices_shown": len(display),
             "limited": limit is not None and len(display) < total_matching,
             "sort_by": sort_by,
+            "group_by_field": group_key,
+            "groups": groups,
             "items": display,
+            **(
+                {"group_size_filter": {"min": min_group_size, "max": max_group_size},
+                 "groups_before_size_filter": groups_before_size_filter}
+                if group_key is not None and (min_group_size is not None or max_group_size is not None)
+                else {}
+            ),
+            **(
+                {"unresolved_client_invoices": unresolved,
+                 "unresolved_note": (
+                     f"{unresolved} invoice(s) could not be matched to a client because the case "
+                     "they belong to no longer exists in MyCase (confirmed 404). They are grouped "
+                     "under a '(...)' placeholder — report them as unmatched, never as a client name."
+                 )}
+                if group_key is not None and group_by_case_field and unresolved
+                else {}
+            ),
         }
 
     async def get_invoice_payments(self, payable_id=None, status=None, page_size=None, page_token=None):
@@ -1019,6 +1539,181 @@ class MyCaseREST:
         if status is not None:
             params["filter[status]"] = status
         return await self._get_list("/invoice_payments", params)
+
+    async def aggregate_payments(
+        self,
+        status: str | None = None,
+        case_id: int | None = None,
+        date_after: str | None = None,
+        date_before: str | None = None,
+        group_by: str | None = None,
+        min_group_size: int | None = None,
+        max_group_size: int | None = None,
+        max_payments: int | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Fetch every invoice payment matching the given filters (paginating
+        internally, server-side, same deterministic pattern as aggregate_cases —
+        confirmed live this account has 9,314 total invoice payments, each
+        already carrying `attorney`, `case`, `client`, and `invoice` as direct
+        {"id": N} refs) then group/count/sum. This exists because get_invoice_payments()
+        with no filters already returns everything firm-wide but has no
+        aggregation of its own — a raw dump that size is exactly the kind of
+        thing this whole reporting layer was built to avoid handing the model.
+
+        `status` — exact match on MyCase's own payment status (e.g. "success",
+        "pending", "failure") — passed straight through to get_invoice_payments'
+        server-side filter[status], so it also narrows the page walk itself.
+        `case_id` — pass this for "payment history for case X"; payments already
+        carry `case: {"id": N}` directly (confirmed live), no join needed.
+        get_case_payments() is a thin wrapper around exactly this.
+        `date_after`/`date_before` (YYYY-MM-DD, inclusive) filter on the
+        payment's own `date` — MyCase has no server-side filter for this.
+        `group_by` — "attorney", "client", "case", or "status" (default).
+        Attorney is resolved via one staff lookup (same as aggregate_cases).
+        Client/case are resolved via a per-id lookup covering only the DISTINCT
+        ids present in the already-filtered result — deliberately NOT the
+        firm-wide /clients list endpoint, which is unreliable at this account's
+        scale (see _request's 5xx-retry notes); a single get_client()/get_case()
+        lookup is a different, much cheaper endpoint.
+
+        Returns total_payments, total_amount (sum of `amount` across every
+        surviving payment, coerced via _as_float — some real accounts return
+        this as a string), and a `groups` array ([{name, count, total_amount}],
+        sorted by total_amount descending) alongside the flat `items` array —
+        read `groups` directly for a breakdown/"which attorney/client" question,
+        don't re-sum `items` yourself.
+        """
+        payment_cap = await self._payment_scan_cap(max_payments)
+
+        async def fetch_page(token: str | None) -> dict[str, Any]:
+            return await self.get_invoice_payments(status=status, page_size=1000, page_token=token)
+
+        all_payments, truncated = await self._walk_all_pages(fetch_page, payment_cap)
+
+        date_after_d, date_before_d = self._date_only(date_after), self._date_only(date_before)
+
+        def matches(p: dict[str, Any]) -> bool:
+            if case_id is not None and (p.get("case") or {}).get("id") != case_id:
+                return False
+            if (date_after_d or date_before_d) and not self._date_matches(
+                p.get("date"), None, date_after_d, date_before_d
+            ):
+                return False
+            return True
+
+        survivors = [p for p in all_payments if matches(p)]
+
+        group_key = (group_by or "status").strip().lower()
+        if group_key not in ("attorney", "client", "case", "status"):
+            raise ValueError(
+                f"'{group_by}' is not a valid group_by for payments — use 'attorney', 'client', "
+                "'case', or 'status'."
+            )
+
+        staff_names = await self._staff_name_map() if group_key == "attorney" else {}
+        name_cache: dict[int, str] = {}
+
+        async def resolve_name(ref: dict[str, Any] | None, kind: str) -> str:
+            rid = (ref or {}).get("id") if isinstance(ref, dict) else None
+            if not isinstance(rid, int):
+                return "(unknown)"
+            if kind == "attorney":
+                return staff_names.get(rid, f"staff #{rid}")
+            if rid in name_cache:
+                return name_cache[rid]
+            try:
+                if kind == "client":
+                    obj = await self.get_client(rid)
+                    name = " ".join(p for p in (obj.get("first_name"), obj.get("last_name")) if p) or f"client #{rid}"
+                else:
+                    obj = await self.get_case(rid)
+                    name = obj.get("name") or obj.get("case_number") or f"case #{rid}"
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("aggregate_payments_name_resolve_failed", kind=kind, id=rid, error=str(exc))
+                name = f"{kind} #{rid}"
+            name_cache[rid] = name
+            return name
+
+        group_names: list[str] = []
+        for p in survivors:
+            if group_key == "status":
+                group_names.append(p.get("status") or "(no status)")
+            elif group_key == "attorney":
+                group_names.append(await resolve_name(p.get("attorney"), "attorney"))
+            elif group_key == "client":
+                group_names.append(await resolve_name(p.get("client"), "client"))
+            else:
+                group_names.append(await resolve_name(p.get("case"), "case"))
+
+        counts: dict[str, int] = {}
+        sums: dict[str, float] = {}
+        for g in group_names:
+            counts[g] = counts.get(g, 0) + 1
+
+        # HAVING on group size — same primitive as aggregate_cases, e.g. "clients
+        # who have made more than 3 payments". Applied BEFORE the totals are
+        # summed so total_payments/total_amount describe the filtered set.
+        groups_before_size_filter = len(counts)
+        if min_group_size is not None or max_group_size is not None:
+            keep = {
+                g for g, n in counts.items()
+                if (min_group_size is None or n >= min_group_size)
+                and (max_group_size is None or n <= max_group_size)
+            }
+            kept = [(p, g) for p, g in zip(survivors, group_names) if g in keep]
+            survivors = [p for p, _ in kept]
+            group_names = [g for _, g in kept]
+            counts = {g: n for g, n in counts.items() if g in keep}
+
+        total_amount = 0.0
+        for p, g in zip(survivors, group_names):
+            amt = self._as_float(p.get("amount"))
+            sums[g] = sums.get(g, 0.0) + amt
+            total_amount += amt
+
+        groups = [
+            {"name": name, "count": counts[name], "total_amount": round(sums[name], 2)}
+            for name in sorted(counts, key=lambda n: sums[n], reverse=True)
+        ]
+
+        # Same reasoning as aggregate_invoices: put the resolved name on the row
+        # under a real column, so a workbook can actually split by it.
+        payment_column = {
+            "attorney": "attorney_name", "client": "client_name", "case": "case_name",
+        }.get(group_key)
+
+        items: list[dict[str, Any]] = []
+        for p, g in zip(survivors, group_names):
+            row = dict(p)
+            row["group_name"] = g
+            if payment_column:
+                row[payment_column] = g
+            items.append(row)
+
+        display_items = items[:limit] if limit is not None else items
+
+        return {
+            "success": True,
+            "total_payments": len(survivors),
+            "total_amount": round(total_amount, 2),
+            "total_groups": len(counts),
+            "group_by_field": group_key,
+            "groups": groups,
+            "payments_scanned": len(all_payments),
+            "truncated": truncated,
+            "payments_shown": len(display_items),
+            "limited": limit is not None and len(items) > len(display_items),
+            "items": display_items,
+        }
+
+    async def get_case_payments(self, case_id: int) -> dict[str, Any]:
+        """Payment history for ONE case. Payments already carry `case: {"id": N}`
+        directly (confirmed live) — this is a thin, obviously-named wrapper
+        around aggregate_payments rather than a separate invoice->payment join,
+        so the model has a real, exact-match tool to call for "payment history
+        for case X" instead of fabricating one that doesn't exist."""
+        return await self.aggregate_payments(case_id=int(case_id), group_by="status")
 
     # ── Leads ────────────────────────────────────────────────────────────────────
 
@@ -1040,6 +1735,170 @@ class MyCaseREST:
 
     async def get_lead(self, lead_id: int):
         return await self._get_one(f"/leads/{int(lead_id)}")
+
+    async def aggregate_leads(
+        self,
+        status: str | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
+        assigned_attorney: str | None = None,
+        group_by: str | None = None,
+        min_group_size: int | None = None,
+        max_group_size: int | None = None,
+        max_leads: int | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Fetch every lead matching the given filters (paginating internally,
+        server-side, same deterministic pattern as aggregate_cases — never let
+        the model eyeball/count raw leads itself) then group and count.
+
+        `status` — EXACT match, case-insensitive. A lead's status is a literal
+        firm-defined string (confirmed live: "NEED FOLLOW-UP", "New Lead", "Need
+        consultation", "UNDECIDED", "NOT FOUND YET" all exist as real values in
+        this account) — do NOT substring-match it the way custom_field_filters
+        does elsewhere; "NEED FOLLOW-UP" and "New Lead" share no useful substring.
+        Use status="NEED FOLLOW-UP" for "prospects/leads that need follow-up".
+
+        `created_after`/`created_before` (YYYY-MM-DD, inclusive) filter on the
+        lead's own created_at. MyCase has no server-side filter for this — same
+        client-side pattern as everywhere else here.
+
+        `assigned_attorney` — a lead has NO attorney field of its own. Once
+        converted it carries a `case: {"id": N}` link, and THAT case may have a
+        staff member flagged lead_lawyer=true (same convention as
+        aggregate_cases' assigned_attorney). Pass "" for "prospects/leads with NO
+        assigned attorney" (covers a lead with no linked case at all, and a lead
+        whose linked case has no lead_lawyer set) — or a substring to match a
+        specific attorney's resolved name. Resolving this walks the firm's case
+        list ONCE (only when assigned_attorney/group_by="assigned_attorney" is
+        actually requested) to build a case_id -> attorney map, the same bulk-
+        fetch-once-then-compute-in-Python pattern as everywhere else here —
+        deliberately NOT one get_case() call per lead, which would mean one HTTP
+        round-trip per DISTINCT case and get slower the more leads match.
+
+        `group_by` — "status" (default) or "assigned_attorney"/"lead_attorney".
+        Returns the same shape as aggregate_cases: a flat `items` array plus a
+        top-level `groups` array ([{name, count}], sorted highest-count-first) —
+        read `groups` directly for a breakdown/"which X has the most" question,
+        don't re-count `items` yourself.
+        """
+        lead_cap = await self._lead_scan_cap(max_leads)
+
+        async def fetch_lead_page(token: str | None) -> dict[str, Any]:
+            return await self.get_leads(page_size=1000, page_token=token)
+
+        all_leads, leads_truncated = await self._walk_all_pages(fetch_lead_page, lead_cap)
+
+        created_after_d, created_before_d = self._date_only(created_after), self._date_only(created_before)
+        want_status = status.strip().lower() if status else None
+
+        def status_and_date_match(lead: dict[str, Any]) -> bool:
+            if want_status is not None and (lead.get("status") or "").strip().lower() != want_status:
+                return False
+            if (created_after_d or created_before_d) and not self._date_matches(
+                lead.get("created_at"), None, created_after_d, created_before_d
+            ):
+                return False
+            return True
+
+        survivors = [ld for ld in all_leads if status_and_date_match(ld)]
+
+        group_key = (group_by or "status").strip().lower()
+        if group_key not in ("status", "assigned_attorney", "lead_attorney", "lead attorney"):
+            raise ValueError(f"'{group_by}' is not a valid group_by for leads — use 'status' or 'assigned_attorney'.")
+        group_by_attorney = group_key != "status"
+        need_attorney = group_by_attorney or assigned_attorney is not None
+
+        case_attorney_map: dict[int, str | None] = {}
+        if need_attorney:
+            # One bulk case walk, not one get_case() per lead — same
+            # fetch-once-then-compute-in-Python pattern as aggregate_cases.
+            staff_names = await self._staff_name_map()
+            case_cap = await self._case_scan_cap(None)
+
+            async def fetch_case_page(token: str | None) -> dict[str, Any]:
+                return await self.get_cases(page_size=1000, page_token=token)
+
+            all_cases_for_join, _ = await self._walk_all_pages(fetch_case_page, case_cap)
+            for case in all_cases_for_join:
+                cid = case.get("id")
+                if not isinstance(cid, int):
+                    continue
+                attorney = None
+                for s in case.get("staff") or []:
+                    if s.get("lead_lawyer") is True:
+                        sid = s.get("id")
+                        attorney = staff_names.get(sid, f"staff #{sid}") if isinstance(sid, int) else None
+                        break
+                case_attorney_map[cid] = attorney
+
+        def resolve_attorney(lead: dict[str, Any]) -> str | None:
+            case_ref = lead.get("case") or {}
+            cid = case_ref.get("id") if isinstance(case_ref, dict) else None
+            return case_attorney_map.get(cid) if isinstance(cid, int) else None
+
+        resolved_attorneys = [resolve_attorney(ld) for ld in survivors]
+
+        if assigned_attorney is not None:
+            want_attorney = assigned_attorney.strip().lower()
+            kept, kept_attorneys = [], []
+            for lead, attorney in zip(survivors, resolved_attorneys):
+                if not want_attorney:
+                    if attorney:
+                        continue
+                elif not attorney or want_attorney not in attorney.lower():
+                    continue
+                kept.append(lead)
+                kept_attorneys.append(attorney)
+            survivors, resolved_attorneys = kept, kept_attorneys
+
+        def group_value(lead: dict[str, Any], attorney: str | None) -> str:
+            return (attorney or "(unassigned)") if group_by_attorney else (lead.get("status") or "(no status)")
+
+        counts: dict[str, int] = {}
+        for lead, attorney in zip(survivors, resolved_attorneys):
+            counts[group_value(lead, attorney)] = counts.get(group_value(lead, attorney), 0) + 1
+
+        # HAVING on group size — same primitive as aggregate_cases.
+        groups_before_size_filter = len(counts)
+        if min_group_size is not None or max_group_size is not None:
+            keep = {
+                g for g, n in counts.items()
+                if (min_group_size is None or n >= min_group_size)
+                and (max_group_size is None or n <= max_group_size)
+            }
+            kept = [
+                (lead, attorney) for lead, attorney in zip(survivors, resolved_attorneys)
+                if group_value(lead, attorney) in keep
+            ]
+            survivors = [ld for ld, _ in kept]
+            resolved_attorneys = [a for _, a in kept]
+            counts = {g: n for g, n in counts.items() if g in keep}
+
+        groups = [{"name": name, "count": n} for name, n in sorted(counts.items(), key=lambda kv: kv[1], reverse=True)]
+
+        items: list[dict[str, Any]] = []
+        for lead, attorney in zip(survivors, resolved_attorneys):
+            row = dict(lead)
+            row["assigned_attorney"] = attorney or "(unassigned)"
+            row["group_name"] = group_value(lead, attorney)
+            row["lead_count"] = counts[row["group_name"]]
+            items.append(row)
+
+        display_items = items[:limit] if limit is not None else items
+
+        return {
+            "success": True,
+            "total_leads": len(survivors),
+            "total_groups": len(counts),
+            "group_by_field": "assigned_attorney" if group_by_attorney else "status",
+            "groups": groups,
+            "leads_scanned": len(all_leads),
+            "truncated": leads_truncated,
+            "leads_shown": len(display_items),
+            "limited": limit is not None and len(items) > len(display_items),
+            "items": display_items,
+        }
 
     # ── Locations ────────────────────────────────────────────────────────────────
 
@@ -1107,7 +1966,7 @@ class MyCaseREST:
     # accurate regardless of case count — and returns a small, already-aggregated,
     # already-flattened result the agent only needs to present, not compute.
 
-    _BUILTIN_CASE_FIELDS = {"practice_area", "case_stage", "status", "billing_type"}
+    _BUILTIN_CASE_FIELDS = {"practice_area", "case_stage", "status", "billing_type", "sol_date"}
 
     async def _load_custom_fields(self) -> list[dict[str, Any]]:
         """Walk EVERY page of get_custom_fields() — a single unpaginated call only
@@ -1218,8 +2077,14 @@ class MyCaseREST:
         opened_before: str | None = None,
         closed_after: str | None = None,
         closed_before: str | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
+        sol_date_after: str | None = None,
+        sol_date_before: str | None = None,
         days_to_close_min: int | None = None,
         days_to_close_max: int | None = None,
+        min_group_size: int | None = None,
+        max_group_size: int | None = None,
         max_cases: int | None = None,
         limit: int | None = None,
         include_invoices: bool = False,
@@ -1288,13 +2153,39 @@ class MyCaseREST:
 
         Date filters (all optional, YYYY-MM-DD, inclusive): `opened_after`/
         `opened_before` filter on the case's opened_date; `closed_after`/
-        `closed_before` on closed_date; `updated_after`/`updated_before` on the
-        case's updated_at (updated_after is ALSO used as a server-side pre-filter
-        to reduce pages fetched, same as get_invoices_by_date's pattern — safe
-        because updated_at is never earlier than the case's own opened_date).
-        MyCase has no server-side filter for opened_date/closed_date at all, and no
+        `closed_before` on closed_date; `created_after`/`created_before` on the
+        case's own `created_at` (use this for "recently created"/"created this
+        month" cases — NOT opened_date, which is a separate, case-management
+        concept a case can carry even if it wasn't newly created); `sol_date_after`/
+        `sol_date_before` on `sol_date` — MyCase's own native statute-of-limitations
+        date field on a case (confirmed live; it is NOT a custom field, so it does
+        not go through custom_field_filters' name lookup — pass it as a plain param
+        here instead); `updated_after`/`updated_before` on the case's updated_at
+        (updated_after is ALSO used as a server-side pre-filter to reduce pages
+        fetched, same as get_invoices_by_date's pattern — safe because updated_at is
+        never earlier than the case's own opened_date). MyCase has no server-side
+        filter for opened_date/closed_date/created_at/sol_date at all, and no
         exact/upper-bound filter for updated_at either — all of this is computed
         client-side in Python, same reliability pattern as everything else here.
+
+        `sol_date` is also a valid `group_by`/`custom_field_filters` key like any
+        other builtin field — `custom_field_filters={"sol_date": ""}` finds cases
+        with NO sol_date set at all (the standard empty-string-means-blank
+        convention documented above), for "cases with a missing SOL date".
+
+        `min_group_size` / `max_group_size` filter on HOW BIG EACH GROUP IS — a SQL
+        HAVING clause, not a WHERE clause. This is the ONLY correct way to answer
+        "clients who have more than one case" (group_by="client_name",
+        min_group_size=2), "attorneys with at least 10 open cases"
+        (group_by="assigned_attorney", status="open", min_group_size=10), or
+        "practice areas with only one case" (max_group_size=1). Do NOT try to
+        answer those by grouping everything and picking out the big groups
+        yourself — confirmed live that this returns every matching case (2,380
+        rows) and gets the answer wrong. Groups outside the range are dropped
+        ENTIRELY: their cases disappear from `items`, from `groups`, and from
+        `total_cases`, so every number in the result describes the same filtered
+        set. `groups_before_size_filter` reports how many groups existed before
+        the filter, so a narrow result is never mistaken for a small dataset.
 
         `days_to_close_min` / `days_to_close_max` — for a DURATION question about a
         SINGLE case's own opened_date vs closed_date ("cases closed within 1
@@ -1313,6 +2204,34 @@ class MyCaseREST:
         considered — a case with no closed_date can't have a close-duration, and is
         excluded from the match rather than silently treated as 0 or infinite days.
         """
+        # A field cannot be BLANK and inside a date RANGE at the same time, so this
+        # combination always returns zero rows — and zero rows reads as a fact
+        # ("there are no open cases with an SOL date in the next 30 days") rather
+        # than as a broken query. Confirmed live: asked for SOL dates in the next 30
+        # days, the model sent custom_field_filters={"sol_date": ""} together with
+        # sol_date_after/before and then reported "no matches" — when the real
+        # answer was 92 cases. Rejected up front so the model has to fix the query.
+        _RANGE_PARAMS = {
+            "sol_date": (sol_date_after, sol_date_before, "sol_date_after/sol_date_before"),
+            "opened_date": (opened_after, opened_before, "opened_after/opened_before"),
+            "closed_date": (closed_after, closed_before, "closed_after/closed_before"),
+            "created_at": (created_after, created_before, "created_after/created_before"),
+            "updated_at": (updated_after, updated_before, "updated_after/updated_before"),
+        }
+        for field, want in (custom_field_filters or {}).items():
+            if str(want).strip():
+                continue  # only the blank-check convention conflicts with a range
+            after, before, param_names = _RANGE_PARAMS.get(field.strip().lower(), (None, None, ""))
+            if after or before:
+                raise ValueError(
+                    f"Contradictory filter: custom_field_filters={{'{field}': ''}} means "
+                    f"'{field} is EMPTY', but you also passed {param_names}, which means "
+                    f"'{field} falls in a date range'. Nothing can satisfy both, so this would "
+                    "always return zero rows and look like a real 'none found' answer. Use the "
+                    f"blank check on its own for 'missing {field}', or the range on its own for "
+                    f"'{field} within a period' — not both."
+                )
+
         name_to_id, id_to_name = await self._custom_field_maps()
         staff_names = await self._staff_name_map()
 
@@ -1336,28 +2255,39 @@ class MyCaseREST:
             return None
 
         _COMPUTED_CASE_FIELDS = {"assigned_attorney", "lead attorney", "lead_attorney"}
+        _CLIENT_NAME_FIELDS = {"client_name", "client name", "client"}
 
         def resolve_field(field: str) -> tuple[bool, int | str]:
             """Return (is_builtin, key) — key is the builtin field name (or the
-            "assigned_attorney" computed-field sentinel), or the resolved numeric
-            custom-field id."""
+            "assigned_attorney"/"client_name" computed-field sentinels), or the
+            resolved numeric custom-field id."""
             low = field.strip().lower()
             if low in self._BUILTIN_CASE_FIELDS:
                 return True, low
             if low in _COMPUTED_CASE_FIELDS:
                 return True, "assigned_attorney"
+            if low in _CLIENT_NAME_FIELDS:
+                return True, "client_name"
             if low in name_to_id:
                 return False, name_to_id[low]
             raise ValueError(
                 f"'{field}' is not a builtin case field ({sorted(self._BUILTIN_CASE_FIELDS)}), "
-                f"'assigned_attorney'/'Lead Attorney', or a known custom field name. Call "
-                f"get_custom_fields() to see valid custom field names."
+                f"'assigned_attorney'/'Lead Attorney', 'client_name', or a known custom field "
+                f"name. Call get_custom_fields() to see valid custom field names."
             )
 
         def builtin_value(case: dict[str, Any], key: str) -> str | None:
             """case.get(key) for a real builtin field, except the "assigned_attorney"
-            sentinel, which is computed via lead_attorney_raw instead."""
-            return lead_attorney_raw(case) if key == "assigned_attorney" else case.get(key)
+            and "client_name" sentinels, which are computed instead."""
+            if key == "assigned_attorney":
+                return lead_attorney_raw(case)
+            if key == "client_name":
+                names = [
+                    " ".join(p for p in (cl.get("first_name"), cl.get("last_name")) if p)
+                    for cl in (case.get("clients") or [])
+                ]
+                return ", ".join(n for n in names if n) or None
+            return case.get(key)
 
         filter_specs: list[tuple[bool, int | str, str]] = []
         for field, want in (custom_field_filters or {}).items():
@@ -1392,8 +2322,10 @@ class MyCaseREST:
         closed_after_d, closed_before_d = self._date_only(closed_after), self._date_only(closed_before)
         updated_before_d = self._date_only(updated_before)
         updated_after_d = self._date_only(updated_after)
+        created_after_d, created_before_d = self._date_only(created_after), self._date_only(created_before)
+        sol_after_d, sol_before_d = self._date_only(sol_date_after), self._date_only(sol_date_before)
 
-        def matches(case: dict[str, Any]) -> bool:
+        def matches(case: dict[str, Any], apply_field_filters: bool = True) -> bool:
             if practice_area and practice_area.strip().lower() not in (case.get("practice_area") or "").lower():
                 return False
             stage = (case.get("case_stage") or "").strip().upper()
@@ -1401,10 +2333,19 @@ class MyCaseREST:
                 return False
             if include_stage_set and stage not in include_stage_set:
                 return False
-            for is_builtin, key, want in filter_specs:
+            for is_builtin, key, want in (filter_specs if apply_field_filters else []):
                 actual = builtin_value(case, key) if is_builtin else self._case_custom_value(case, key)  # type: ignore[arg-type]
                 actual_str = (actual or "").strip()
-                if not want:
+                if want == "*":
+                    # "Has ANY value" — the missing other half of the blank check.
+                    # Until this existed the vocabulary was one-sided: "" meant
+                    # "field is blank", and there was NO way to say "field is set".
+                    # Asked to "show Criminal cases WITH assigned attorneys", the
+                    # model reached for the only attorney idiom it had been taught —
+                    # the blank check — and returned exactly the opposite set.
+                    if not actual_str:
+                        return False
+                elif not want:
                     # An empty filter value means "this field is blank/unassigned" —
                     # the natural way to ask for "cases with no Processing Agent",
                     # "missing Case Manager", etc. Previously this branch fell into
@@ -1430,6 +2371,14 @@ class MyCaseREST:
                 case.get("updated_at"), None, updated_after_d, updated_before_d
             ):
                 return False
+            if (created_after_d or created_before_d) and not self._date_matches(
+                case.get("created_at"), None, created_after_d, created_before_d
+            ):
+                return False
+            if (sol_after_d or sol_before_d) and not self._date_matches(
+                case.get("sol_date"), None, sol_after_d, sol_before_d
+            ):
+                return False
             if days_to_close_min is not None or days_to_close_max is not None:
                 opened_d = self._date_only(case.get("opened_date"))
                 closed_d = self._date_only(case.get("closed_date"))
@@ -1447,9 +2396,26 @@ class MyCaseREST:
 
         survivors = [c for c in all_cases if matches(c)]
 
+        # The DENOMINATOR for the field filters. Without it a filtered subset gets
+        # narrated as the whole population: asked to show Criminal cases WITH an
+        # assigned attorney, the agent filtered to the 49 unassigned ones and
+        # reported "All 49 Criminal cases in your system have no assigned attorney"
+        # — there are 237, and 188 of them DO have one. The model could not have
+        # known better; it only ever saw the filtered count.
+        peers_ignoring_field_filters = (
+            sum(1 for c in all_cases if matches(c, apply_field_filters=False))
+            if filter_specs else len(survivors)
+        )
+
         def group_value(case: dict[str, Any]) -> str:
             if group_is_builtin:
-                return builtin_value(case, group_key) or "(none)"  # type: ignore[arg-type]
+                # Match the label the ROW's own column uses, so the same bucket is
+                # never named two different things in one answer. Confirmed live:
+                # grouping by assigned_attorney reported "(none): 640" in `groups`
+                # while every one of those rows read "(unassigned)" — and an Excel
+                # report built from the rows then disagreed with the counts above it.
+                empty = "(unassigned)" if group_key == "assigned_attorney" else "(none)"
+                return builtin_value(case, group_key) or empty  # type: ignore[arg-type]
             val = self._case_custom_value(case, group_key)  # type: ignore[arg-type]
             return val or "(unassigned)"
 
@@ -1457,6 +2423,23 @@ class MyCaseREST:
         for c in survivors:
             g = group_value(c)
             counts[g] = counts.get(g, 0) + 1
+
+        # Filter on the GROUP'S OWN SIZE (a SQL HAVING clause, not a WHERE clause).
+        # Without this there was no way to express "clients who have more than one
+        # case" — the closest the agent could do was group everything and try to
+        # eyeball which groups were big, which meant dumping all 2,380 rows and
+        # getting it wrong (confirmed live). Rows are then narrowed to the
+        # surviving groups so items/counts/groups all describe the same set.
+        group_size_filtered = min_group_size is not None or max_group_size is not None
+        groups_before_size_filter = len(counts)
+        if group_size_filtered:
+            keep = {
+                g for g, n in counts.items()
+                if (min_group_size is None or n >= min_group_size)
+                and (max_group_size is None or n <= max_group_size)
+            }
+            survivors = [c for c in survivors if group_value(c) in keep]
+            counts = {g: n for g, n in counts.items() if g in keep}
 
         total_cases = len(survivors)
         total_groups = len(counts)
@@ -1576,11 +2559,20 @@ class MyCaseREST:
                         "Case data above is still complete and accurate."
                     )
 
-        return {
+        # A compact, pre-sorted group-count summary — separate from the flat `items`
+        # list (which can be large and gets hard-truncated before the model ever
+        # sees it, confirmed live: a "which stage has the most cases" question over
+        # 7,247 cases in 42 groups got a WRONG answer because the model had to scan
+        # a flat, truncatable, arbitrarily-ordered row list to find the largest
+        # group itself). This is computed directly from `counts` — no re-scanning.
+        groups = [{"name": name, "count": n} for name, n in sorted(counts.items(), key=lambda kv: kv[1], reverse=True)]
+
+        result = {
             "success": True,
             "total_cases": total_cases,
             "total_groups": total_groups,
             "group_by_field": group_field_label,
+            "groups": groups,
             "report_date": report_date,
             "cases_scanned": len(all_cases),
             "truncated": case_walk_truncated,
@@ -1588,6 +2580,21 @@ class MyCaseREST:
             "limited": limit is not None and len(items) > len(display_items),
             "items": display_items,
         }
+        if group_size_filtered:
+            # Say plainly that a HAVING filter ran and what it removed, so a small
+            # result can never read as "that's all the data there is".
+            result["group_size_filter"] = {"min": min_group_size, "max": max_group_size}
+            result["groups_before_size_filter"] = groups_before_size_filter
+        if filter_specs and peers_ignoring_field_filters != total_cases:
+            result["total_ignoring_field_filters"] = peers_ignoring_field_filters
+            result["field_filter_note"] = (
+                f"{total_cases:,} of {peers_ignoring_field_filters:,} cases matched "
+                f"{custom_field_filters!r}. The other "
+                f"{peers_ignoring_field_filters - total_cases:,} exist but did not match it — "
+                "never describe this result as 'all' or 'every' case, and always state the "
+                "filtered count against this total."
+            )
+        return result
 
     async def search_cases(
         self,

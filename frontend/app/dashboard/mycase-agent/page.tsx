@@ -13,6 +13,7 @@ import {
   getMyCaseChatSession,
   saveMyCaseChatSession,
   deleteMyCaseChatSession,
+  downloadMyCaseReport,
   type MyCaseStatus,
 } from "@/lib/api";
 import { getAuth } from "@/lib/auth";
@@ -198,6 +199,9 @@ const _REFERENCE_TOOLS = new Set([
   "get_case_stages", "get_case_roles", "get_practice_areas", "get_locations",
   "get_referral_sources", "get_people_groups", "get_custom_fields",
   "get_custom_field_list_options",
+  // Field metadata, not records. Without this its nested schema blob renders as a
+  // giant unformatted key/value wall in the chat (reported live).
+  "describe_entity_fields",
 ]);
 
 function stepResult(step: MyCaseAgentStep) {
@@ -215,6 +219,15 @@ function stepFailed(step: MyCaseAgentStep): boolean {
 // Download button (see DownloadCard below), never as a record table, so they're
 // excluded from stepItems/primaryResultGroups the same way reference tools are.
 const _DOWNLOAD_TOOLS = new Set(["download_document", "download_document_version"]);
+
+// build_report returns a generated .xlsx, but via a RELATIVE, auth-required
+// endpoint rather than a presigned URL — so it gets its own card (ReportCard) and
+// must not go through DownloadCard's plain <a href>, which would 401. It also has
+// no rows of its own, so it's excluded from the record tables the same way.
+// (Listed explicitly rather than spreading _DOWNLOAD_TOOLS — this tsconfig's
+// target rejects Set iteration without downlevelIteration.)
+const _REPORT_TOOL = "build_report";
+const _NON_TABLE_TOOLS = new Set(["download_document", "download_document_version", _REPORT_TOOL]);
 
 /** Pull the filename out of the presigned URL's own response-content-disposition
  * query param, when present, so the button can show a real name instead of a bare
@@ -303,6 +316,106 @@ function DownloadCard({ info }: { info: DownloadInfo }) {
   );
 }
 
+interface ReportInfo {
+  reportId: string;
+  filename: string;
+  title: string;
+  sheetCount: number;
+  rowCount: number;
+  notes: string[];
+}
+
+/** A successful build_report result — a real generated .xlsx held server-side for
+ * an hour. Unlike DownloadCard's presigned S3 links, this endpoint needs the
+ * user's bearer token, so the fetch goes through downloadMyCaseReport() rather
+ * than a plain anchor. */
+function stepReportInfo(step: MyCaseAgentStep): ReportInfo | null {
+  if (step.tool !== _REPORT_TOOL || stepFailed(step)) return null;
+  const r = stepResult(step);
+  const reportId = r?.report_id;
+  if (typeof reportId !== "string" || !reportId) return null;
+  return {
+    reportId,
+    filename: typeof r?.filename === "string" ? r.filename : "report.xlsx",
+    title: typeof r?.title === "string" ? r.title : "Excel report",
+    sheetCount: typeof r?.sheet_count === "number" ? r.sheet_count : 0,
+    rowCount: typeof r?.row_count === "number" ? r.row_count : 0,
+    notes: Array.isArray(r?.notes) ? (r.notes as unknown[]).filter((n): n is string => typeof n === "string") : [],
+  };
+}
+
+function ReportCard({ info }: { info: ReportInfo }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function onDownload() {
+    setBusy(true);
+    setError(null);
+    try {
+      await downloadMyCaseReport(info.reportId, info.filename);
+    } catch (e) {
+      // Reports expire after an hour — say so rather than failing silently.
+      setError(e instanceof Error ? e.message : "Download failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const parts = [
+    `${info.sheetCount} sheet${info.sheetCount === 1 ? "" : "s"}`,
+    `${info.rowCount.toLocaleString()} row${info.rowCount === 1 ? "" : "s"}`,
+  ];
+
+  return (
+    <div
+      style={{
+        border: "1px solid #c7e0f4", borderRadius: 10, background: "#f5fbff",
+        padding: "0.6rem 0.7rem", minWidth: 0,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: "0.8rem", fontWeight: 600, color: "#1e293b",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}
+            title={info.title}
+          >
+            <i className="bi bi-file-earmark-spreadsheet" style={{ marginRight: 6, color: "#127a45" }} />
+            {info.title}
+          </div>
+          <div style={{ fontSize: "0.68rem", color: "#64748b" }}>{parts.join(" · ")} · expires in 1 hour</div>
+        </div>
+        <button
+          type="button"
+          onClick={onDownload}
+          disabled={busy}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 4,
+            padding: "0.35rem 0.75rem", background: busy ? "#94a3b8" : "#127a45", color: "#fff",
+            border: "none", borderRadius: 6, fontSize: "0.75rem", fontWeight: 600,
+            cursor: busy ? "default" : "pointer", whiteSpace: "nowrap", flexShrink: 0,
+          }}
+        >
+          <i className={busy ? "bi bi-hourglass-split" : "bi bi-download"} />
+          {busy ? "Preparing…" : "Download Excel"}
+        </button>
+      </div>
+      {info.notes.length > 0 && (
+        <ul style={{ margin: "0.5rem 0 0", paddingLeft: "1.1rem", fontSize: "0.68rem", color: "#7c5c14" }}>
+          {info.notes.map((note, i) => (
+            <li key={i}>{note}</li>
+          ))}
+        </ul>
+      )}
+      {error && (
+        <div style={{ marginTop: "0.4rem", fontSize: "0.68rem", color: "#b42318" }}>{error}</div>
+      )}
+    </div>
+  );
+}
+
 /** Every non-reference tool result that carries real record data becomes table
  * rows — a proper array (get_cases/search_cases/...) as-is, OR a single-object
  * result (get_case/get_client/...) wrapped as a one-row table, so "get case X" is
@@ -310,10 +423,16 @@ function DownloadCard({ info }: { info: DownloadInfo }) {
  * keys are stripped; a result with nothing left after that (e.g. just a download
  * URL) is correctly left to the model's own prose instead of a fake table. */
 function stepItems(step: MyCaseAgentStep): RecordRow[] | null {
-  if (_DOWNLOAD_TOOLS.has(step.tool)) return null;
+  if (_NON_TABLE_TOOLS.has(step.tool)) return null;
   if (stepFailed(step)) return null;
   const r = stepResult(step);
   if (!r) return null;
+  // Rows moved into a generated workbook, or the call was a suppressed duplicate.
+  // Either way there is nothing to tabulate — and falling through to the
+  // single-object wrapper below would render the leftover metadata (total_invoices,
+  // sort_by, the whole `groups` array…) as a bogus one-row table, which is what
+  // produced the wall of semicolon-joined group names reported in the chat.
+  if (r.items_omitted !== undefined || r.repeat_of_earlier_identical_call) return null;
   if (Array.isArray(r.items)) {
     // A genuine list/search/report result (get_X, search_X, aggregate_X) — even
     // when it legitimately found zero matches, do NOT fall through to the
@@ -411,6 +530,10 @@ const MessageBubble = memo(function MessageBubble({ msg }: { msg: MyCaseChatMess
     () => (isUser ? [] : steps.map(stepDownloadInfo).filter((d): d is DownloadInfo => d !== null)),
     [isUser, steps]
   );
+  const reports = useMemo(
+    () => (isUser ? [] : steps.map(stepReportInfo).filter((r): r is ReportInfo => r !== null)),
+    [isUser, steps]
+  );
 
   return (
     <div className={`d-flex ${isUser ? "justify-content-end" : "justify-content-start"}`} style={{ minWidth: 0 }}>
@@ -440,6 +563,14 @@ const MessageBubble = memo(function MessageBubble({ msg }: { msg: MyCaseChatMess
             it as plain text the user had to copy/paste). */}
         {downloads.map((d, i) => (
           <DownloadCard key={`${d.url}-${i}`} info={d} />
+        ))}
+
+        {/* A generated multi-sheet Excel report. This is what answers requests one
+            flat table structurally cannot ("each attorney's cases on its own
+            sheet, plus a summary") — the per-group detail lives in the workbook
+            rather than being shipped back as raw rows. */}
+        {reports.map((r) => (
+          <ReportCard key={r.reportId} info={r} />
         ))}
 
         {/* The actual result data — one table + one Download CSV button per

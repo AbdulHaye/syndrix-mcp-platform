@@ -127,9 +127,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         from app.services.audit import audit_service
         from app.services.memory import memory_service
         from app.services.cache import cache_service
+        from app.services.report_store import report_store
         audit_service.set_redis(redis_client)
         memory_service.set_redis(redis_client)
         cache_service.set_redis(redis_client)
+        report_store.set_redis(redis_client)
 
         # Store on app state for health checks and other access
         app.state.redis = redis_client
