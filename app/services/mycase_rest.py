@@ -314,6 +314,19 @@ class MyCaseREST:
                 return joined
         return (resp.text or "").strip()[:300]
 
+    # Retry/timeout budget for a SINGLE MyCase call, including all of its retries.
+    # Tunable, but keep the total meaningfully below whatever read timeout sits in
+    # front of the app (nginx's default proxy_read_timeout is 60s) — one slow call
+    # must never be able to consume the whole request's deadline on its own.
+    _ATTEMPT_TIMEOUT_SECONDS = 25.0
+    # 45s, not 60s: connection setup/teardown adds a few seconds per attempt that the
+    # in-loop clock doesn't see, and the last attempt may run its full timeout. A 60s
+    # budget measured 64.8s end to end — still over nginx's 60s default, which is the
+    # thing this is meant to stay under. 45s lands around 50s worst case.
+    _TOTAL_BUDGET_SECONDS = 45.0
+    _MIN_ATTEMPT_SECONDS = 5.0
+    _MAX_GATEWAY_TIMEOUT_ATTEMPTS = 2  # a 504 already cost an upstream timeout
+
     async def _request(self, method: str, path: str, params: dict[str, Any] | None = None) -> httpx.Response:
         headers = await self._headers()
         clean = {k: v for k, v in (params or {}).items() if v is not None}
@@ -326,31 +339,95 @@ class MyCaseREST:
         # class — which raises INSTEAD OF returning a response, so it needs its own
         # try/except; a bare status-code check after the request call never runs if the
         # request itself raised).
+        #
+        # RETRIES ARE BUDGETED. Without a ceiling the retry loop could run far longer
+        # than anything waiting on it: 4 attempts x 30s + 1+2+4s of backoff is ~127s
+        # for ONE call, and /clients on this account reliably 504s, so it burned the
+        # full ~135s (measured) before failing anyway. A single agent turn makes many
+        # such calls, so a turn could sail past a reverse proxy's read timeout
+        # (nginx's default is 60s) and the browser would get a 504 with no response —
+        # flagged from the hosted logs as repeated "/clients attempt 1/2/3" lines.
+        # _TOTAL_BUDGET_SECONDS caps the whole thing; per-attempt timeouts shrink to
+        # whatever budget is left, so the caller gets a real error in bounded time.
+        #
+        # 504 is special: it means MyCase's OWN gateway already timed out, so each
+        # retry costs another full upstream timeout for an error that is rarely
+        # transient. It gets one retry, not three.
         _RETRYABLE_STATUS = {429, 502, 503, 504}
         _RETRY_DELAYS = [1, 2, 4]  # seconds between retries (rate limit is 25 req/s per client)
+        started = time.monotonic()
+
+        def _remaining() -> float:
+            return self._TOTAL_BUDGET_SECONDS - (time.monotonic() - started)
+
         resp: httpx.Response | None = None
+        gateway_timeouts = 0
+        last_error: str | None = None
         for attempt, delay in enumerate([0] + _RETRY_DELAYS):
             if delay:
+                if _remaining() <= delay:
+                    logger.warning(
+                        "mycase_retry_budget_exhausted", path=path, attempt=attempt,
+                        elapsed=round(time.monotonic() - started, 1),
+                    )
+                    break
                 logger.warning("mycase_retry", path=path, attempt=attempt, wait=delay)
                 await asyncio.sleep(delay)
+
+            attempt_timeout = max(self._MIN_ATTEMPT_SECONDS, min(self._ATTEMPT_TIMEOUT_SECONDS, _remaining()))
             try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with httpx.AsyncClient(timeout=attempt_timeout) as client:
                     resp = await client.request(method, f"{_API_BASE}{path}", headers=headers, params=clean)
             except httpx.TransportError as exc:
-                if attempt < len(_RETRY_DELAYS):
+                last_error = str(exc)
+                if attempt < len(_RETRY_DELAYS) and _remaining() > 0:
                     continue
-                logger.error("mycase_connection_error", path=path, detail=str(exc))
-                raise RuntimeError(f"Could not connect to MyCase's API after retries: {exc}") from exc
-            if resp.status_code in _RETRYABLE_STATUS and attempt < len(_RETRY_DELAYS):
-                continue
-            break
+                # "Could not connect" is wrong and misleading for a READ timeout —
+                # the connection was fine, MyCase just never answered in time. That
+                # distinction is what tells you whether to look at the network or at
+                # the endpoint being slow.
+                timed_out = isinstance(exc, httpx.TimeoutException)
+                took = time.monotonic() - started
+                logger.error(
+                    "mycase_timeout" if timed_out else "mycase_connection_error",
+                    path=path, detail=last_error, elapsed=round(took, 1), attempts=attempt + 1,
+                )
+                raise RuntimeError(
+                    f"MyCase's API did not respond within {took:.0f}s ({attempt + 1} attempt(s)) "
+                    f"for {path} — the endpoint is timing out, not refusing the connection."
+                    if timed_out else
+                    f"Could not connect to MyCase's API after {attempt + 1} attempt(s) in "
+                    f"{took:.0f}s: {exc}"
+                ) from exc
+
+            if resp.status_code not in _RETRYABLE_STATUS:
+                break
+            if resp.status_code == 504:
+                gateway_timeouts += 1
+                if gateway_timeouts > self._MAX_GATEWAY_TIMEOUT_ATTEMPTS - 1:
+                    logger.warning(
+                        "mycase_gateway_timeout_giving_up", path=path, attempts=attempt + 1,
+                        elapsed=round(time.monotonic() - started, 1),
+                    )
+                    break
+            if attempt >= len(_RETRY_DELAYS) or _remaining() <= 0:
+                break
         assert resp is not None
+        elapsed = time.monotonic() - started
         if resp.status_code >= 400:
             message = self._extract_error_message(resp)
-            logger.warning("mycase_api_error", path=path, status=resp.status_code, message=message)
+            logger.warning(
+                "mycase_api_error", path=path, status=resp.status_code, message=message,
+                elapsed=round(elapsed, 1),
+            )
             code_text = self._ERROR_CODE_TEXT.get(resp.status_code, "")
             detail = f"{message} ({code_text})" if code_text and message else (message or code_text or f"HTTP {resp.status_code}")
-            raise RuntimeError(f"MyCase API {resp.status_code}: {detail}")
+            # The elapsed time belongs in the error: a 504 after 60s is a very
+            # different operational problem from a 404 after 0.2s, and the agent
+            # surfaces this string to the user.
+            raise RuntimeError(f"MyCase API {resp.status_code} after {elapsed:.0f}s: {detail}")
+        if elapsed > self._ATTEMPT_TIMEOUT_SECONDS:
+            logger.warning("mycase_slow_request", path=path, elapsed=round(elapsed, 1))
         return resp
 
     async def _get_one(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
