@@ -318,7 +318,16 @@ class MyCaseREST:
     # Tunable, but keep the total meaningfully below whatever read timeout sits in
     # front of the app (nginx's default proxy_read_timeout is 60s) — one slow call
     # must never be able to consume the whole request's deadline on its own.
-    _ATTEMPT_TIMEOUT_SECONDS = 25.0
+    # 35s, not 25s. Audited across every list endpoint, 3 runs each: this account
+    # is genuinely slow AND wildly variable — the SAME request with the SAME
+    # parameters ranged from 0.9s to 22.6s (get_tasks: 22.2s / 1.2s / 21.9s;
+    # get_document_versions_all at page_size 25: 22.5s / 15.6s / 22.6s). A 25s
+    # per-attempt timeout left almost no margin over a legitimate 22.6s response,
+    # so a healthy-but-slow call could be aborted and then retried into an even
+    # shorter window. The first attempt now comfortably covers the observed worst
+    # case; the total budget below is unchanged, so the proxy-timeout ceiling this
+    # was built to respect still holds.
+    _ATTEMPT_TIMEOUT_SECONDS = 35.0
     # 45s, not 60s: connection setup/teardown adds a few seconds per attempt that the
     # in-loop clock doesn't see, and the last attempt may run its full timeout. A 60s
     # budget measured 64.8s end to end — still over nginx's 60s default, which is the
@@ -331,9 +340,7 @@ class MyCaseREST:
         headers = await self._headers()
         clean = {k: v for k, v in (params or {}).items() if v is not None}
         # Retries cover THREE things: rate limiting (429), transient SERVER-side errors
-        # (502/503/504 — confirmed live: /clients 504'd "Endpoint request timed out" on this
-        # account even at page_size=1, reproduced twice — MyCase's own gateway, not a client
-        # timeout, since a real response with a status code came back) — both checked via
+        # (502/503/504 — a real response with a status code comes back) — both checked via
         # status code after a response comes back — AND transient network failures
         # (httpx.TransportError — e.g. the "All connection attempts failed" ConnectError
         # class — which raises INSTEAD OF returning a response, so it needs its own
@@ -342,8 +349,8 @@ class MyCaseREST:
         #
         # RETRIES ARE BUDGETED. Without a ceiling the retry loop could run far longer
         # than anything waiting on it: 4 attempts x 30s + 1+2+4s of backoff is ~127s
-        # for ONE call, and /clients on this account reliably 504s, so it burned the
-        # full ~135s (measured) before failing anyway. A single agent turn makes many
+        # for ONE call, and a hanging endpoint burned the full ~135s (measured) before
+        # failing anyway. A single agent turn makes many
         # such calls, so a turn could sail past a reverse proxy's read timeout
         # (nginx's default is 60s) and the browser would get a 504 with no response —
         # flagged from the hosted logs as repeated "/clients attempt 1/2/3" lines.
@@ -575,6 +582,22 @@ class MyCaseREST:
     # observed 48k-document scale.
     _SCAN_HARD_CEILING = 100000
 
+    # Scan-cap probes ask for the smallest page that still carries the Item-Count
+    # header — but NOT page_size=1, because /clients hangs on tiny pages.
+    #
+    # Audited across all 21 firm-wide list endpoints, 3 runs per size. /clients is
+    # the ONLY one affected, and it is completely deterministic: page_size 1 and 2
+    # failed 3/3 every time, page_size 5 succeeded 3/3 in 0.8s, and 5/10/25/100/1000
+    # all report the same item_count (8,499). Every other endpoint is healthy at
+    # every size (a first audit pass suggested otherwise, but that was a too-tight
+    # timeout clipping slow-but-working responses — see _ATTEMPT_TIMEOUT_SECONDS).
+    #
+    # Worth remembering: the probe was the only thing failing, and it made /clients
+    # look permanently dead, so every contact feature was written off for a day as
+    # an unavoidable MyCase limitation. 5 rows is a negligible price for immunity
+    # to that whole class of bug.
+    _PROBE_PAGE_SIZE = 5
+
     @classmethod
     def _cap_from_probe(cls, requested: int | None, probe: dict[str, Any]) -> tuple[int, bool]:
         """Turns a cheap page_size=1 probe's item_count into a scan cap sized to
@@ -606,7 +629,8 @@ class MyCaseREST:
         if requested is not None:
             return requested
         probe = await self.get_invoices(
-            page_size=1, only_allowed_online_payments=only_allowed_online_payments, updated_after=updated_after,
+            page_size=self._PROBE_PAGE_SIZE, only_allowed_online_payments=only_allowed_online_payments,
+            updated_after=updated_after,
         )
         cap, ok = self._cap_from_probe(requested, probe)
         if not ok:
@@ -622,7 +646,7 @@ class MyCaseREST:
         query matched its name, because it was never even in the scanned batch."""
         if requested is not None:
             return requested
-        probe = await self.get_cases(page_size=1, status=status)
+        probe = await self.get_cases(page_size=self._PROBE_PAGE_SIZE, status=status)
         cap, ok = self._cap_from_probe(requested, probe)
         if not ok:
             logger.warning("mycase_scan_cap_probe_missing_item_count", resource="cases", probe_keys=list(probe.keys()))
@@ -638,7 +662,7 @@ class MyCaseREST:
         clients exist."""
         if requested is not None:
             return requested
-        probe = await self.get_clients(page_size=1)
+        probe = await self.get_clients(page_size=self._PROBE_PAGE_SIZE)
         cap, ok = self._cap_from_probe(requested, probe)
         if not ok:
             logger.warning("mycase_scan_cap_probe_missing_item_count", resource="clients", probe_keys=list(probe.keys()))
@@ -648,7 +672,7 @@ class MyCaseREST:
         """Same idea, for the firm-wide lead walk in aggregate_leads."""
         if requested is not None:
             return requested
-        probe = await self.get_leads(page_size=1)
+        probe = await self.get_leads(page_size=self._PROBE_PAGE_SIZE)
         cap, ok = self._cap_from_probe(requested, probe)
         if not ok:
             logger.warning("mycase_scan_cap_probe_missing_item_count", resource="leads", probe_keys=list(probe.keys()))
@@ -659,7 +683,7 @@ class MyCaseREST:
         Confirmed live: this real account has 9,314 total invoice payments."""
         if requested is not None:
             return requested
-        probe = await self.get_invoice_payments(page_size=1)
+        probe = await self.get_invoice_payments(page_size=self._PROBE_PAGE_SIZE)
         cap, ok = self._cap_from_probe(requested, probe)
         if not ok:
             logger.warning("mycase_scan_cap_probe_missing_item_count", resource="invoice_payments", probe_keys=list(probe.keys()))
@@ -671,7 +695,7 @@ class MyCaseREST:
         old hardcoded 20000-document cap."""
         if requested is not None:
             return requested
-        probe = await self.get_documents(page_size=1)
+        probe = await self.get_documents(page_size=self._PROBE_PAGE_SIZE)
         cap, ok = self._cap_from_probe(requested, probe)
         if not ok:
             logger.warning("mycase_scan_cap_probe_missing_item_count", resource="documents", probe_keys=list(probe.keys()))
@@ -861,13 +885,14 @@ class MyCaseREST:
     # "clients who have more than one case", the model twice reached for
     # aggregate_clients(group_by="id") instead of counting CASES per client. The
     # count it wants does not exist on a client record at all. Caught before the
-    # (slow, 504-prone) /clients walk and turned into a corrective error.
+    # /clients walk and turned into a corrective error.
     _CLIENT_IDENTITY_FIELDS = {"id", "uuid", "client_id"}
 
     async def aggregate_clients(
         self,
         created_after: str | None = None,
         created_before: str | None = None,
+        field_filters: dict[str, str] | None = None,
         group_by: str | None = None,
         min_group_size: int | None = None,
         max_group_size: int | None = None,
@@ -876,11 +901,10 @@ class MyCaseREST:
     ) -> dict[str, Any]:
         """Fetch every client (contact) matching the given filters (paginating
         internally, server-side, same deterministic pattern as aggregate_cases)
-        then group/count. NOTE: /clients has been observed to return HTTP 504
-        even at page_size=1 on this large a real account — _request() retries
-        502/503/504 automatically, but this call may still be slow or fail on a
-        very large client list; report the real error plainly if it does,
-        rather than assuming zero clients exist.
+        then group/count. Confirmed working at this account's scale: 8,499 clients.
+        (Historic note: this looked permanently broken for a while because the
+        scan-cap probe used page_size=1, and MyCase hangs on pages smaller than 5 —
+        see _PROBE_PAGE_SIZE. The endpoint itself was fine all along.)
 
         `created_after`/`created_before` (YYYY-MM-DD, inclusive) filter on the
         client's own created_at — use this for "contacts created this month/
@@ -896,7 +920,7 @@ class MyCaseREST:
         NOTE this counts CLIENTS PER GROUP, never cases per client — see the
         identity-field guard below for why that distinction keeps coming up.
         """
-        # Rejected before the slow, 504-prone /clients walk rather than after it.
+        # Rejected before the full /clients walk rather than after it.
         if group_by and group_by.strip().lower() in self._CLIENT_IDENTITY_FIELDS:
             raise ValueError(
                 f"Grouping clients by '{group_by}' is meaningless — that field is unique per "
@@ -922,6 +946,20 @@ class MyCaseREST:
                 cl.get("created_at"), None, created_after_d, created_before_d
             ):
                 return False
+            # Same three value conventions as aggregate_cases' custom_field_filters,
+            # so "clients without an email address" is one direct call rather than
+            # grouping by email and hoping the model reads the "(none)" bucket.
+            for field, want in (field_filters or {}).items():
+                actual = str(cl.get(field.strip()) or "").strip()
+                want_norm = str(want).strip()
+                if want_norm == "*":
+                    if not actual:
+                        return False
+                elif not want_norm:
+                    if actual:
+                        return False
+                elif want_norm.lower() not in actual.lower():
+                    return False
             return True
 
         survivors = [cl for cl in all_clients if matches(cl)]

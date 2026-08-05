@@ -2,9 +2,9 @@
 
 Flagged from the hosted logs as repeated "/clients attempt 1 / 2 / 3" lines: the
 retry loop had no overall ceiling, so ONE call could run 4 attempts x 30s plus
-1+2+4s of backoff — ~127s, measured 135.2s live against /clients, which 504s
-reliably on this account. Anything with a read timeout in front (nginx defaults
-to 60s) gives up long before that, so the caller never sees a real answer.
+1+2+4s of backoff — ~127s, measured 135.2s live. Anything with a read timeout in
+front (nginx defaults to 60s) gives up long before that, so the caller never sees
+a real answer.
 
 These use a fake transport so they run in milliseconds and never touch MyCase.
 """
@@ -141,3 +141,40 @@ async def test_a_client_error_is_not_retried(monkeypatch):
     with pytest.raises(RuntimeError, match="404"):
         await rest._request("GET", "/cases/1")
     assert len(calls) == 1
+
+
+# ── scan-cap probe page size ─────────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_scan_cap_probes_never_use_a_page_size_mycase_hangs_on(monkeypatch):
+    """MyCase hangs on /clients for page_size 1 and 2 (measured: ~46s timeout every
+    time) but answers in under a second for 5+, all reporting the same item_count.
+    Because every scan-cap probe hardcoded page_size=1, the probe was the ONLY
+    thing failing — and it made /clients look permanently broken, so every contact
+    feature was written off as an unavoidable MyCase limitation. It wasn't."""
+    rest = MyCaseREST()
+    assert rest._PROBE_PAGE_SIZE >= 5
+
+    seen: list[int | None] = []
+
+    async def _fake_list(page_size=None, **kw):
+        seen.append(page_size)
+        return {"items": [], "item_count": 8499, "next_page_token": None}
+
+    for attr in ("get_clients", "get_leads", "get_documents", "get_invoice_payments"):
+        monkeypatch.setattr(rest, attr, _fake_list)
+    monkeypatch.setattr(rest, "get_cases", _fake_list)
+    monkeypatch.setattr(rest, "get_invoices", _fake_list)
+
+    assert await rest._client_scan_cap(None) == 8499
+    await rest._lead_scan_cap(None)
+    await rest._document_scan_cap(None)
+    await rest._payment_scan_cap(None)
+    await rest._case_scan_cap(None)
+    await rest._invoice_scan_cap(None)
+
+    assert seen, "probes ran"
+    assert all(s is not None and s >= 5 for s in seen), (
+        f"a probe used a page size MyCase hangs on: {seen}"
+    )

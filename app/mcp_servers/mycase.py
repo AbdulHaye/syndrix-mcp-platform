@@ -177,9 +177,11 @@ async def get_client_message_threads(client_id: int) -> dict:
         "case count, so there is nothing here to filter on. That is a cases question: call "
         "aggregate_cases(group_by='client_name', min_group_size=2). Grouping clients by 'id' is "
         "always wrong (unique per client, so every group has exactly one row) and is rejected.\n\n"
-        "NOTE: MyCase's /clients endpoint has been observed to time out (HTTP 504) on a large "
-        "real account even at page_size=1 — this may be slow or occasionally fail; report the "
-        "real error plainly if it does rather than claiming zero contacts exist.\n\n"
+        "field_filters: {client field name: value}, with the same three conventions as "
+        "custom_field_filters — \"\" = the field is BLANK, \"*\" = the field HAS any value, "
+        "anything else = substring match. 'Clients without an email address' is "
+        "field_filters={'email': ''}; 'clients that have a phone number' is "
+        "field_filters={'cell_phone_number': '*'}.\n\n"
         "Returns total_clients, a `groups` array ([{name, count}], sorted highest-count-first) "
         "when group_by is given, and the flat `items` array."
     ),
@@ -187,6 +189,7 @@ async def get_client_message_threads(client_id: int) -> dict:
 async def aggregate_clients(
     created_after: str | None = None,
     created_before: str | None = None,
+    field_filters: dict | None = None,
     group_by: str | None = None,
     min_group_size: int | None = None,
     max_group_size: int | None = None,
@@ -194,8 +197,8 @@ async def aggregate_clients(
 ) -> dict:
     return await _call(
         "aggregate_clients", created_after=created_after, created_before=created_before,
-        group_by=group_by, min_group_size=min_group_size, max_group_size=max_group_size,
-        limit=limit,
+        field_filters=field_filters, group_by=group_by,
+        min_group_size=min_group_size, max_group_size=max_group_size, limit=limit,
     )
 
 
@@ -209,8 +212,7 @@ async def aggregate_clients(
         "do NOT try to spot duplicates yourself from a raw get_clients list, that's unreliable "
         "at any real firm size.\n\n"
         "Returns duplicate_email_groups/duplicate_phone_groups (counts) plus by_email/by_phone "
-        "arrays, each entry listing the matching clients (id, name, email, phone numbers). Same "
-        "504-risk note as aggregate_clients applies to the underlying /clients walk."
+        "arrays, each entry listing the matching clients (id, name, email, phone numbers)."
     ),
 )
 async def find_duplicate_clients() -> dict:
