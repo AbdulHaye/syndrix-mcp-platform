@@ -1301,6 +1301,119 @@ class MyCaseREST:
 
     # ── Expenses ─────────────────────────────────────────────────────────────────
 
+    async def _event_scan_cap(self, requested: int | None) -> int:
+        if requested is not None:
+            return requested
+        probe = await self.get_events(page_size=self._PROBE_PAGE_SIZE)
+        cap, ok = self._cap_from_probe(requested, probe)
+        if not ok:
+            logger.warning("mycase_scan_cap_probe_missing_item_count", resource="events", probe_keys=list(probe.keys()))
+        return cap
+
+    async def aggregate_events(
+        self,
+        upcoming: bool | None = None,
+        start_after: str | None = None,
+        start_before: str | None = None,
+        event_type: str | None = None,
+        enrich: bool = True,
+        group_by: str | None = None,
+        min_group_size: int | None = None,
+        max_group_size: int | None = None,
+        max_events: int | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Filter/group calendar events (appointments), with the client and case
+        merged in.
+
+        An event carries ONLY `case: {"id": N}` and `staff` — no client, no case
+        name. So "upcoming appointments with client details" cannot be answered
+        from the events endpoint alone, which is exactly why asking for it
+        returned a bare list of events. With `enrich=True` (the default) each row
+        gains case_number, case_name, case_stage, practice_area, client_name,
+        client_email and assigned_attorney — a MANY-TO-ONE relationship, so it
+        stays one row per appointment rather than spilling into extra sheets.
+
+        `upcoming=True` keeps events starting today or later (the usual meaning of
+        "upcoming"); `start_after`/`start_before` (YYYY-MM-DD, inclusive) give an
+        explicit window. MyCase has no server-side filter for event start dates —
+        only `updated_after` — so this is computed in Python like everything else
+        here. `event_type` substring-matches the event's type.
+        """
+        event_cap = await self._event_scan_cap(max_events)
+
+        async def fetch_page(token: str | None) -> dict[str, Any]:
+            return await self.get_events(page_size=1000, page_token=token)
+
+        all_events, truncated = await self._walk_all_pages(fetch_page, event_cap)
+
+        after_d = self._date_only(start_after)
+        before_d = self._date_only(start_before)
+        if upcoming:
+            today = time.strftime("%Y-%m-%d")
+            after_d = max(after_d, today) if after_d else today
+        type_want = event_type.strip().lower() if event_type else None
+
+        def matches(ev: dict[str, Any]) -> bool:
+            if (after_d or before_d) and not self._date_matches(ev.get("start"), None, after_d, before_d):
+                return False
+            if type_want and type_want not in str(ev.get("event_type") or "").lower():
+                return False
+            return True
+
+        survivors = [dict(e) for e in all_events if matches(e)]
+
+        unresolved = 0
+        if enrich and survivors:
+            unresolved = self._merge_case_context(survivors, await self._case_context_map())
+
+        counts: dict[str, int] = {}
+        groups: list[dict[str, Any]] | None = None
+        groups_before_size_filter = 0
+        group_key = group_by.strip() if group_by else None
+        if group_key:
+            for ev in survivors:
+                val = ev.get(group_key)
+                g = str(val) if val not in (None, "") else "(none)"
+                ev["group_name"] = g
+                counts[g] = counts.get(g, 0) + 1
+            groups_before_size_filter = len(counts)
+            if min_group_size is not None or max_group_size is not None:
+                keep = {
+                    g for g, n in counts.items()
+                    if (min_group_size is None or n >= min_group_size)
+                    and (max_group_size is None or n <= max_group_size)
+                }
+                survivors = [e for e in survivors if e.get("group_name") in keep]
+                counts = {g: n for g, n in counts.items() if g in keep}
+            groups = [{"name": n, "count": c} for n, c in sorted(counts.items(), key=lambda kv: kv[1], reverse=True)]
+
+        survivors.sort(key=lambda e: str(e.get("start") or ""))
+        display = survivors[:limit] if limit is not None else survivors
+
+        result: dict[str, Any] = {
+            "success": True,
+            "total_events": len(survivors),
+            "events_scanned": len(all_events),
+            "truncated": truncated,
+            "events_shown": len(display),
+            "limited": limit is not None and len(survivors) > len(display),
+            "enriched": bool(enrich),
+            "group_by_field": group_key,
+            "groups": groups,
+            "items": display,
+        }
+        if group_key and (min_group_size is not None or max_group_size is not None):
+            result["group_size_filter"] = {"min": min_group_size, "max": max_group_size}
+            result["groups_before_size_filter"] = groups_before_size_filter
+        if unresolved:
+            result["unresolved_case_events"] = unresolved
+            result["unresolved_note"] = (
+                f"{unresolved} event(s) have no reachable case, so they have no client details — "
+                "report them as unmatched rather than as clientless appointments."
+            )
+        return result
+
     async def get_expenses(self, updated_after=None, page_size=None, page_token=None):
         return await self._get_list("/expenses", self._page(page_size, page_token, updated_after))
 
@@ -1402,6 +1515,7 @@ class MyCaseREST:
         invoice_date_before: str | None = None,
         due_date_after: str | None = None,
         due_date_before: str | None = None,
+        enrich: bool = False,
         group_by: str | None = None,
         min_group_size: int | None = None,
         max_group_size: int | None = None,
@@ -1529,6 +1643,13 @@ class MyCaseREST:
         total_matching = len(survivors)
         display = survivors[:limit] if limit is not None else survivors
 
+        # "Overdue invoices WITH client and case detail" — an invoice carries only
+        # `case: {id}`, so client/case columns have to be merged in. Many-to-one,
+        # so it stays one row per invoice.
+        enrich_unresolved = 0
+        if enrich and survivors:
+            enrich_unresolved = self._merge_case_context(survivors, await self._case_context_map())
+
         groups: list[dict[str, Any]] | None = None
         if group_key is not None:
             case_join: dict[int, dict[str, str]] = {}
@@ -1626,9 +1747,11 @@ class MyCaseREST:
             "invoices_shown": len(display),
             "limited": limit is not None and len(display) < total_matching,
             "sort_by": sort_by,
+            "enriched": bool(enrich),
             "group_by_field": group_key,
             "groups": groups,
             "items": display,
+            **({"unresolved_case_invoices": enrich_unresolved} if enrich_unresolved else {}),
             **(
                 {"group_size_filter": {"min": min_group_size, "max": max_group_size},
                  "groups_before_size_filter": groups_before_size_filter}
@@ -2138,6 +2261,99 @@ class MyCaseREST:
             if not page_token:
                 break
         return names
+
+    # ── Cross-resource enrichment: the CASE is the hub ───────────────────────────
+    # Confirmed against the live API: events, tasks, invoices, expenses, time
+    # entries, leads and notes ALL link out through exactly one field — `case:
+    # {"id": N}` — and none of them carry a client or attorney of their own. The
+    # case is what holds `clients[]` and the lead_lawyer staff flag. So "upcoming
+    # appointments with client details" or "overdue invoices with client and case
+    # detail" are the same two-hop join: row -> case -> client/attorney.
+    #
+    # That is why this is ONE shared resolver rather than per-question plumbing:
+    # any resource that carries a case reference gets the same enrichment for free,
+    # including combinations nobody has asked for yet.
+    _CASE_CONTEXT_FIELDS = (
+        "case_number", "case_name", "case_stage", "practice_area",
+        "client_name", "client_email", "assigned_attorney",
+    )
+
+    async def _case_context_map(self) -> dict[int, dict[str, Any]]:
+        """case_id -> the case/client/attorney columns worth merging onto a row.
+
+        One bulk case walk plus one staff lookup, regardless of how many rows are
+        being enriched — never a per-row fetch.
+        """
+        staff_names = await self._staff_name_map()
+        case_cap = await self._case_scan_cap(None)
+
+        async def fetch_page(token: str | None) -> dict[str, Any]:
+            # field[client] expansion is what makes client name AND email available
+            # without a second walk of /clients.
+            return await self.get_cases(
+                page_size=1000, page_token=token,
+                field_client="id,first_name,last_name,email",
+            )
+
+        all_cases, _ = await self._walk_all_pages(fetch_page, case_cap)
+        context: dict[int, dict[str, Any]] = {}
+        for case in all_cases:
+            cid = case.get("id")
+            if not isinstance(cid, int):
+                continue
+            names, emails = [], []
+            for cl in case.get("clients") or []:
+                full = " ".join(p for p in (cl.get("first_name"), cl.get("last_name")) if p).strip()
+                if full:
+                    names.append(full)
+                email = str(cl.get("email") or "").strip()
+                if email:
+                    emails.append(email)
+            attorney = None
+            for s in case.get("staff") or []:
+                if s.get("lead_lawyer") is True:
+                    sid = s.get("id")
+                    attorney = staff_names.get(sid, f"staff #{sid}") if isinstance(sid, int) else None
+                    break
+            context[cid] = {
+                "case_number": case.get("case_number"),
+                "case_name": case.get("name"),
+                "case_stage": case.get("case_stage"),
+                "practice_area": case.get("practice_area"),
+                "client_name": ", ".join(names) or "(none)",
+                "client_email": ", ".join(emails) or "(none)",
+                "assigned_attorney": attorney or "(unassigned)",
+            }
+        return context
+
+    @classmethod
+    def _merge_case_context(
+        cls, rows: list[dict[str, Any]], context: dict[int, dict[str, Any]],
+        fields: tuple[str, ...] | None = None,
+    ) -> int:
+        """Merge case/client/attorney columns onto each row IN PLACE (many-to-one,
+        so it stays one row per record — a merge, not extra sheets).
+
+        Returns how many rows could not be resolved. Unresolvable rows are labelled
+        explicitly rather than left blank: ~3,222 case ids referenced by invoices
+        return a real 404 (the case was deleted), and a blank cell there would read
+        as "this client has no name" instead of "this link is broken".
+        """
+        wanted = fields or cls._CASE_CONTEXT_FIELDS
+        unresolved = 0
+        for row in rows:
+            ref = row.get("case")
+            cid = ref.get("id") if isinstance(ref, dict) else None
+            ctx = context.get(cid) if isinstance(cid, int) else None
+            if ctx is None:
+                unresolved += 1
+                placeholder = "(no case linked)" if not isinstance(cid, int) else "(case deleted in MyCase)"
+                for field in wanted:
+                    row.setdefault(field, placeholder)
+                continue
+            for field in wanted:
+                row[field] = ctx.get(field)
+        return unresolved
 
     # Curated, admin-extensible canonicalization map for Processing Agent name
     # variants (duplicate spellings, nicknames, etc.) — deliberately a small static

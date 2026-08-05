@@ -306,9 +306,47 @@ async def download_document_version(document_id: int, version_number: int) -> di
 
 # ── Events (calendar) ────────────────────────────────────────────────────────────
 
-@mycase_mcp.tool(name="get_events", description="Get all firm calendar events viewable by the authorized user — includes start/end time, all_day, private, event_type, location, associated case, and attending staff.")
+@mycase_mcp.tool(name="get_events", description="Get all firm calendar events viewable by the authorized user — includes start/end time, all_day, private, event_type, location, associated case, and attending staff. For 'upcoming appointments', date filtering, or anything needing client/case details, use aggregate_events instead — a raw event has NO client on it.")
 async def get_events(updated_after: str | None = None, page_size: int | None = None, page_token: str | None = None) -> dict:
     return await _call("get_events", updated_after=updated_after, page_size=page_size, page_token=page_token)
+
+
+@mycase_mcp.tool(
+    name="aggregate_events",
+    description=(
+        "Filter/group calendar events (appointments), WITH the client and case merged in. Use "
+        "this for 'upcoming appointments', 'appointments with client details', 'this week's "
+        "calendar', or any event question involving dates, grouping or client/case info.\n\n"
+        "WHY: a raw event carries ONLY `case: {id}` and `staff` — no client, no case name. So "
+        "get_events alone CANNOT answer 'appointments with client details'; it returns bare "
+        "events, which is exactly what happened when it was tried.\n\n"
+        "upcoming=true: events starting today or later. start_after/start_before (YYYY-MM-DD, "
+        "inclusive) for an explicit window — MyCase has no server-side event-date filter, so "
+        "this is computed exactly in Python. event_type: substring match.\n"
+        "enrich (default true): merges case_number, case_name, case_stage, practice_area, "
+        "client_name, client_email and assigned_attorney onto EACH event row. This is a "
+        "many-to-one relationship, so it stays ONE ROW PER APPOINTMENT — a merge, not extra "
+        "sheets. Set enrich=false only if the client/case columns genuinely aren't wanted.\n"
+        "group_by / min_group_size / max_group_size behave as in the other aggregate_* tools "
+        "(e.g. group_by='assigned_attorney' for a per-attorney calendar breakdown)."
+    ),
+)
+async def aggregate_events(
+    upcoming: bool | None = None,
+    start_after: str | None = None,
+    start_before: str | None = None,
+    event_type: str | None = None,
+    enrich: bool = True,
+    group_by: str | None = None,
+    min_group_size: int | None = None,
+    max_group_size: int | None = None,
+    limit: int | None = None,
+) -> dict:
+    return await _call(
+        "aggregate_events", upcoming=upcoming, start_after=start_after, start_before=start_before,
+        event_type=event_type, enrich=enrich, group_by=group_by,
+        min_group_size=min_group_size, max_group_size=max_group_size, limit=limit,
+    )
 
 
 # ── Expenses ─────────────────────────────────────────────────────────────────────
@@ -393,6 +431,11 @@ async def get_invoices_by_date(
         "first), or 'invoice_date' (DESCENDING — most recent first).\n"
         "limit: caps items to the first N sorted/filtered rows for a 'top N' request — "
         "total_invoices still reports the TRUE full-match count regardless of limit.\n\n"
+        "enrich: set TRUE whenever the request wants client or case DETAIL alongside the "
+        "invoices ('overdue invoices with client and case detail'). An invoice carries only a "
+        "case link, so this merges case_number, case_name, case_stage, practice_area, "
+        "client_name, client_email and assigned_attorney onto EACH invoice row — many-to-one, "
+        "so it stays ONE ROW PER INVOICE rather than producing extra sheets.\n"
         "group_by (optional): 'client_name'/'client', 'assigned_attorney'/'lead_attorney', or "
         "'status' — use this for 'unpaid invoices grouped by client' or 'invoices by assigned "
         "attorney'. An invoice itself has no client/attorney field, only a case link — this "
@@ -413,6 +456,7 @@ async def aggregate_invoices(
     invoice_date_before: str | None = None,
     due_date_after: str | None = None,
     due_date_before: str | None = None,
+    enrich: bool = False,
     group_by: str | None = None,
     min_group_size: int | None = None,
     max_group_size: int | None = None,
@@ -423,7 +467,8 @@ async def aggregate_invoices(
     return await _call(
         "aggregate_invoices", status=status, paid=paid, min_balance_due=min_balance_due,
         invoice_date_after=invoice_date_after, invoice_date_before=invoice_date_before,
-        due_date_after=due_date_after, due_date_before=due_date_before, group_by=group_by,
+        due_date_after=due_date_after, due_date_before=due_date_before,
+        enrich=enrich, group_by=group_by,
         min_group_size=min_group_size, max_group_size=max_group_size,
         sort_by=sort_by, limit=limit, only_allowed_online_payments=only_allowed_online_payments,
     )
